@@ -8,28 +8,69 @@
 </head>
 <body>
   <div class="container">
-    <header>
-      <h1>📁 File Storage App</h1>
-      <p>Upload, download, and manage your files</p>
+    <header class="page-header">
+      <div>
+        <h1>File Storage Manager</h1>
+        <p>Organize local and Hugging Face bucket files with folder support</p>
+      </div>
+      <div class="badge-group">
+        <span class="badge">Local</span>
+        <span class="badge">HF Bucket</span>
+      </div>
     </header>
 
     <main>
-      <!-- Upload Section -->
-      <section class="upload-section">
-        <h2>Upload File</h2>
-        <div class="upload-area" id="uploadArea">
-          <input type="file" id="fileInput" hidden>
-          <p>Drag and drop files here or click to select</p>
+      <section class="card card-grid">
+        <div class="card-header">
+          <h2>Upload</h2>
+          <small>Local and HF storage shared flow</small>
         </div>
-        <button id="uploadBtn" class="btn btn-primary">Upload</button>
-        <div id="uploadStatus" class="status"></div>
+        <div class="card-body">
+          <div class="upload-area" id="uploadArea">
+            <input type="file" id="fileInput" multiple hidden>
+            <input type="file" id="folderInput" webkitdirectory directory multiple hidden>
+            <p><strong>Drag folder/files here</strong><br>or click to browse</p>
+          </div>
+
+          <div class="target-controls">
+            <label><input type="radio" name="uploadTarget" value="local" checked> Local</label>
+            <label><input type="radio" name="uploadTarget" value="hf"> HF Bucket</label>
+          </div>
+
+          <div class="upload-actions">
+            <button id="uploadBtn" class="btn btn-primary">Upload Selected</button>
+            <button id="uploadFolderBtn" class="btn btn-secondary">Upload Folder</button>
+            <button id="loadHfBtn" class="btn btn-outline">Refresh HF</button>
+          </div>
+
+          <div id="uploadStatus" class="status"></div>
+        </div>
       </section>
 
-      <!-- Files List Section -->
-      <section class="files-section">
-        <h2>Your Files</h2>
-        <div id="filesList" class="files-list">
-          <p>Loading files...</p>
+      <section class="card">
+        <div class="card-header">
+          <h2>File Manager</h2>
+          <small>View and manage path-based files</small>
+        </div>
+        <div class="card-body">
+          <div class="management-actions">
+            <div class="action-group">
+              <label>Sort: <select id="sortBy"><option value="name">Name</option><option value="size">Size</option><option value="date">Date</option></select></label>
+              <label>Order: <select id="sortOrder"><option value="asc">Asc</option><option value="desc">Desc</option></select></label>
+              <label><input id="selectAll" type="checkbox"> Select all</label>
+            </div>
+            <div class="action-group">
+              <button id="showLocalBtn" class="btn btn-link">Local</button>
+              <button id="showHfBtn" class="btn btn-link">HF</button>
+              <button id="createFolderBtn" class="btn btn-info">Create Folder</button>
+              <button id="moveSelectedBtn" class="btn btn-warning">Move Selected</button>
+              <button id="deleteSelectedBtn" class="btn btn-danger">Delete Selected</button>
+              <button id="clearSelectionBtn" class="btn btn-secondary">Clear</button>
+            </div>
+          </div>
+
+          <div id="hfStatus" class="status"></div>
+          <div id="filesList" class="files-list"><p>Loading files...</p></div>
         </div>
       </section>
     </main>

@@ -6,19 +6,256 @@
 
 body {
   font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background-color: #f3f6fd;
   min-height: 100vh;
   padding: 20px;
+  color: #1f2937;
 }
 
 .container {
-  max-width: 800px;
+  max-width: 1100px;
   margin: 0 auto;
-  background: white;
-  border-radius: 12px;
-  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+  background: #ffffff;
+  border-radius: 16px;
+  box-shadow: 0 14px 35px rgba(31, 41, 55, 0.15);
   overflow: hidden;
 }
+
+.page-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: linear-gradient(135deg, #4f46e5 0%, #2563eb 100%);
+  padding: 24px 32px;
+  color: #f9fafb;
+}
+
+.page-header h1 {
+  font-size: 2rem;
+  margin-bottom: 4px;
+}
+
+.page-header p {
+  color: #dbeafe;
+}
+
+.badge-group {
+  display: flex;
+  gap: 10px;
+}
+
+.badge {
+  background: rgba(249, 115, 22, 0.2);
+  color: #f97316;
+  border-radius: 9999px;
+  padding: 6px 12px;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+main {
+  padding: 24px 32px 32px;
+  display: grid;
+  gap: 20px;
+}
+
+.card {
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.card-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 16px;
+}
+
+.card-header {
+  border-bottom: 1px solid #e5e7eb;
+  padding: 16px 20px;
+}
+
+.card-header h2 {
+  font-size: 1.1rem;
+  margin-bottom: 2px;
+}
+
+.card-header small {
+  color: #6b7280;
+}
+
+.card-body {
+  padding: 18px 20px 22px;
+}
+
+.upload-area {
+  border: 2px dashed #93c5fd;
+  border-radius: 10px;
+  padding: 32px;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.25s ease;
+  background: #f8fbff;
+  margin-bottom: 16px;
+}
+
+.upload-area p {
+  color: #2563eb;
+  font-size: 1rem;
+  line-height: 1.4;
+}
+
+.upload-area:hover {
+  background: #f0f8ff;
+  border-color: #4f46e5;
+}
+
+.upload-area.dragover {
+  background: #eff6ff;
+  border-color: #1d4ed8;
+}
+
+.target-controls,
+.management-actions .action-group {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+
+.btn {
+  padding: 10px 18px;
+  border: none;
+  border-radius: 8px;
+  font-size: 0.92rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  font-weight: 600;
+}
+
+.btn-primary {
+  background: linear-gradient(135deg, #4f46e5, #2563eb);
+  color: white;
+}
+
+.btn-secondary {
+  background: #e5e7eb;
+  color: #1f2937;
+}
+
+.btn-outline {
+  background: transparent;
+  border: 1px solid #6b7280;
+  color: #374151;
+}
+
+.btn-info {
+  background: #0ea5e9;
+  color: white;
+}
+
+.btn-warning {
+  background: #f59e0b;
+  color: white;
+}
+
+.btn-danger {
+  background: #ef4444;
+  color: white;
+}
+
+.btn-link {
+  background: none;
+  color: #2563eb;
+  padding: 8px;
+  border-radius: 8px;
+  text-decoration: underline;
+}
+
+.btn:hover {
+  transform: translateY(-1px);
+}
+
+.status {
+  margin-top: 10px;
+  border-radius: 8px;
+  padding: 12px;
+  display: none;
+}
+
+.status.show {
+  display: block;
+}
+
+.status.success {
+  background: #dcfce7;
+  border: 1px solid #86efac;
+  color: #166534;
+}
+
+.status.error {
+  background: #fee2e2;
+  border: 1px solid #fecaca;
+  color: #991b1b;
+}
+
+.files-list {
+  display: grid;
+  gap: 12px;
+}
+
+.file-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 14px;
+  background: #f8fafc;
+  border-radius: 10px;
+  border-left: 4px solid #3b82f6;
+  gap: 10px;
+}
+
+.file-info {
+  flex: 1;
+  overflow: hidden;
+}
+
+.file-name {
+  font-size: 0.96rem;
+  font-weight: 600;
+  color: #1f2937;
+  overflow-wrap: anywhere;
+}
+
+.file-size {
+  font-size: 0.82rem;
+  color: #6b7280;
+}
+
+.file-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+@media (max-width: 900px) {
+  .card-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .file-item {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .file-actions {
+    justify-content: flex-start;
+  }
+}
+
 
 header {
   background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
