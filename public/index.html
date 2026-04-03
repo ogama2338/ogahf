@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>File Storage App</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>📁 File Storage App</h1>
+      <p>Upload, download, and manage your files</p>
+    </header>
+
+    <main>
+      <!-- Upload Section -->
+      <section class="upload-section">
+        <h2>Upload File</h2>
+        <div class="upload-area" id="uploadArea">
+          <input type="file" id="fileInput" hidden>
+          <p>Drag and drop files here or click to select</p>
+        </div>
+        <button id="uploadBtn" class="btn btn-primary">Upload</button>
+        <div id="uploadStatus" class="status"></div>
+      </section>
+
+      <!-- Files List Section -->
+      <section class="files-section">
+        <h2>Your Files</h2>
+        <div id="filesList" class="files-list">
+          <p>Loading files...</p>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>
