@@ -67,6 +67,26 @@ function hfCheckConfig(res) {
   return true;
 }
 
+// FIX: Helper to recursively delete folders and files!
+async function hfDeletePaths(targetPaths) {
+  const targets = Array.isArray(targetPaths) ? targetPaths : [targetPaths];
+  const toDelete = new Set();
+  
+  // 1. Search for all files that match the name OR are inside the folder
+  for await (const item of listFiles({ repo: `buckets/${HF_BUCKET}`, repoType: 'bucket', recursive: true, accessToken: HF_TOKEN })) {
+    for (const target of targets) {
+      if (item.path === target || item.path.startsWith(target + '/')) {
+        toDelete.add(item.path);
+      }
+    }
+  }
+
+  // 2. Delete them one by one
+  for (const p of toDelete) {
+    await deleteFile({ repo: `buckets/${HF_BUCKET}`, repoType: 'bucket', path: p, accessToken: HF_TOKEN });
+  }
+}
+
 app.get('/', (req, res) => {
   const indexPath = path.join(__dirname, 'public', 'index.html');
   fs.readFile(indexPath, 'utf8', (err, data) => {
@@ -82,7 +102,6 @@ app.get('/api/hf/files', async (req, res) => {
   try {
     const output = [];
     for await (const item of listFiles({ repo: `buckets/${HF_BUCKET}`, repoType: 'bucket', recursive: true, accessToken: HF_TOKEN })) {
-      // FIX: Grabbing lastModified so dates show up properly
       output.push({ path: item.path, type: item.type, size: item.size, updatedAt: item.lastModified || item.updatedAt || null });
     }
     res.json(addParentDirectories(output));
@@ -121,22 +140,24 @@ app.post('/api/hf/create-folder', async (req, res) => {
   }
 });
 
+// FIX: Delete Single Item (Folder or File)
 app.delete('/api/hf/delete/*', async (req, res) => {
   if (!hfCheckConfig(res)) return;
   try {
-    await deleteFile({ repo: `buckets/${HF_BUCKET}`, repoType: 'bucket', path: req.params[0], accessToken: HF_TOKEN });
-    res.json({ message: 'Deleted' });
+    await hfDeletePaths(req.params[0]);
+    res.json({ message: 'Deleted successfully' });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
 
+// FIX: Delete Multiple Items (Folders or Files)
 app.post('/api/hf/delete-multiple', async (req, res) => {
   if (!hfCheckConfig(res)) return;
   const { filenames } = req.body;
   try {
-    for (const file of filenames) await deleteFile({ repo: `buckets/${HF_BUCKET}`, repoType: 'bucket', path: file, accessToken: HF_TOKEN });
-    res.json({ message: 'Deleted' });
+    await hfDeletePaths(filenames);
+    res.json({ message: 'Deleted successfully' });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
