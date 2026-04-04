@@ -16,8 +16,12 @@ const createFolderBtn = document.getElementById('createFolderBtn');
 const moveSelectedBtn = document.getElementById('moveSelectedBtn');
 const deleteSelectedBtn = document.getElementById('deleteSelectedBtn');
 const clearSelectionBtn = document.getElementById('clearSelectionBtn');
+const uploadProgressContainer = document.getElementById('uploadProgressContainer');
+const progressBar = document.getElementById('progressBar');
+const speedElement = document.getElementById('speed');
+const timeRemainingElement = document.getElementById('timeRemaining');
 
-let currentTarget = 'local';
+let currentTarget = 'hf';
 let currentPath = ''; // Current folder path for navigation
 let selectedFiles = new Set();
 let cachedFiles = [];
@@ -218,9 +222,7 @@ async function uploadFiles(fileList, isFolder = false) {
 
   for (const file of fileList) {
     const relativePath = file.webkitRelativePath || file.name;
-    // Prepend current path if we're in a subfolder
     const fullPath = currentPath ? `${currentPath}/${relativePath}` : relativePath;
-    // Create a new file with the correct name to ensure multer gets the right originalname
     const renamedFile = new File([file], fullPath, { type: file.type });
     formData.append('files', renamedFile, fullPath);
     formData.append('paths', fullPath);
@@ -228,26 +230,63 @@ async function uploadFiles(fileList, isFolder = false) {
 
   uploadBtn.disabled = true;
   uploadBtn.textContent = 'Uploading...';
+  uploadProgressContainer.style.display = 'block';
+  progressBar.style.width = '0%';
+  speedElement.textContent = '';
+  timeRemainingElement.textContent = '';
 
-  try {
-    const response = await fetch(`${baseUrl}/upload-multiple`, {
-      method: 'POST',
-      body: formData,
-    });
-    if (!response.ok) {
-      const err = await response.json();
-      throw new Error(err.error || 'Upload failed');
+  const xhr = new XMLHttpRequest();
+  xhr.open('POST', `${baseUrl}/upload-multiple`, true);
+
+  let startTime = Date.now();
+
+  xhr.upload.onprogress = (event) => {
+    if (event.lengthComputable) {
+      const percentComplete = (event.loaded / event.total) * 100;
+      progressBar.style.width = `${percentComplete}%`;
+
+      const elapsedTime = (Date.now() - startTime) / 1000; // in seconds
+      if (elapsedTime > 0) {
+        const speed = event.loaded / elapsedTime; // bytes per second
+        speedElement.textContent = `${formatBytes(speed)}/s`;
+
+        const remainingBytes = event.total - event.loaded;
+        const timeRemaining = remainingBytes / speed; // in seconds
+        timeRemainingElement.textContent = `${Math.round(timeRemaining)}s remaining`;
+      }
     }
-    setStatus(`Uploaded ${fileList.length} file(s) to ${target.toUpperCase()}`, 'success');
-    fileInput.value = '';
-    await loadFiles(currentTarget);
-  } catch (error) {
-    setStatus('Error uploading files: ' + error.message, 'error');
-  } finally {
+  };
+
+  xhr.onload = async () => {
     uploadBtn.disabled = false;
-    uploadBtn.textContent = 'Upload';
-  }
+    uploadBtn.textContent = 'Upload Selected';
+    uploadProgressContainer.style.display = 'none';
+
+    if (xhr.status >= 200 && xhr.status < 300) {
+      setStatus(`Uploaded ${fileList.length} file(s) to ${target.toUpperCase()}`, 'success');
+      fileInput.value = '';
+      if(folderInput) folderInput.value = '';
+      await loadFiles(currentTarget);
+    } else {
+      try {
+        const err = JSON.parse(xhr.responseText);
+        setStatus(`Error uploading files: ${err.error || 'Upload failed'}`, 'error');
+      } catch (e) {
+        setStatus(`Error uploading files: ${xhr.statusText}`, 'error');
+      }
+    }
+  };
+
+  xhr.onerror = () => {
+    uploadBtn.disabled = false;
+    uploadBtn.textContent = 'Upload Selected';
+    uploadProgressContainer.style.display = 'none';
+    setStatus('Error uploading files: Network error.', 'error');
+  };
+
+  xhr.send(formData);
 }
+
 
 loadHfBtn.addEventListener('click', () => {
   currentTarget = 'hf';
@@ -625,4 +664,3 @@ function escapeHtml(text) {
 
 loadFiles();
 setInterval(() => loadFiles(currentTarget), 5000);
-

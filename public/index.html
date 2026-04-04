@@ -29,18 +29,26 @@
           <div class="upload-area" id="uploadArea">
             <input type="file" id="fileInput" multiple hidden>
             <input type="file" id="folderInput" webkitdirectory directory multiple hidden>
-            <p><strong>Drag folder/files here</strong><br>or click to browse</p>
+            <p><strong>Drag & drop files or a folder here</strong><br>or click to select</p>
           </div>
 
           <div class="target-controls">
-            <label><input type="radio" name="uploadTarget" value="local" checked> Local</label>
-            <label><input type="radio" name="uploadTarget" value="hf"> HF Bucket</label>
+            <label><input type="radio" name="uploadTarget" value="local"> Local</label>
+            <label><input type="radio" name="uploadTarget" value="hf" checked> HF Bucket</label>
           </div>
 
           <div class="upload-actions">
             <button id="uploadBtn" class="btn btn-primary">Upload Selected</button>
             <button id="uploadFolderBtn" class="btn btn-secondary">Upload Folder</button>
             <button id="loadHfBtn" class="btn btn-outline">Refresh HF</button>
+          </div>
+
+          <div id="uploadProgressContainer" style="display: none;">
+            <div id="progressBar"></div>
+            <div id="progressStats">
+              <span id="speed"></span>
+              <span id="timeRemaining"></span>
+            </div>
           </div>
 
           <div id="uploadStatus" class="status"></div>
