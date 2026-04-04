@@ -63,8 +63,20 @@
         <div class="card-body">
           <div class="management-actions">
             <div class="action-group">
-              <label>Sort: <select id="sortBy"><option value="name">Name</option><option value="size">Size</option><option value="date">Date</option></select></label>
-              <label>Order: <select id="sortOrder"><option value="asc">Asc</option><option value="desc">Desc</option></select></label>
+              <label>Sort: 
+                <select id="sortBy">
+                  <option value="name">Name</option>
+                  <option value="size">Size</option>
+                  <option value="date" selected>Date</option> <!-- DEFAULT -->
+                </select>
+              </label>
+              <label>Order: 
+                <select id="sortOrder">
+                  <option value="asc">Asc</option>
+                  <option value="desc" selected>Desc</option> <!-- DEFAULT -->
+                </select>
+              </label>
+              <label><input id="pinFolders" type="checkbox" checked> Pin Folders</label> <!-- PIN FEATURE -->
               <label><input id="selectAll" type="checkbox"> Select all</label>
             </div>
             <div class="action-group">

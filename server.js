@@ -12,9 +12,7 @@ const PORT = process.env.PORT || 3000;
 const HF_BUCKET = process.env.HF_BUCKET || ''; 
 const HF_TOKEN = process.env.HF_TOKEN || '';
 
-// --- CORE MIDDLEWARE & SETUP ---
 app.use(cors());
-
 app.use(express.json({ limit: '1000mb' }));
 app.use(express.urlencoded({ limit: '1000mb', extended: true }));
 app.use(express.static('public'));
@@ -30,7 +28,6 @@ const upload = multer({
   limits: { fileSize: 2000 * 1024 * 1024 } 
 });
 
-// --- HELPERS ---
 const cleanup = (files) => {
   const filesToDelete = Array.isArray(files) ? files : [files];
   filesToDelete.forEach(f => {
@@ -64,13 +61,11 @@ function addParentDirectories(items) {
 
 function hfCheckConfig(res) {
   if (!HF_BUCKET || !HF_TOKEN) {
-    res.status(400).json({ error: 'Server is not configured. Missing HF_BUCKET or HF_TOKEN in Render Environment.' });
+    res.status(400).json({ error: 'Server is not configured. Missing HF_BUCKET or HF_TOKEN.' });
     return false;
   }
   return true;
 }
-
-// --- SERVER ROUTES ---
 
 app.get('/', (req, res) => {
   const indexPath = path.join(__dirname, 'public', 'index.html');
@@ -82,15 +77,13 @@ app.get('/', (req, res) => {
   });
 });
 
-// --- HUGGING FACE BUCKET ROUTES ---
-
-// 1. List Files
 app.get('/api/hf/files', async (req, res) => {
   if (!hfCheckConfig(res)) return;
   try {
     const output = [];
     for await (const item of listFiles({ repo: `buckets/${HF_BUCKET}`, repoType: 'bucket', recursive: true, accessToken: HF_TOKEN })) {
-      output.push({ path: item.path, type: item.type, size: item.size, updatedAt: item.updatedAt || null });
+      // FIX: Grabbing lastModified so dates show up properly
+      output.push({ path: item.path, type: item.type, size: item.size, updatedAt: item.lastModified || item.updatedAt || null });
     }
     res.json(addParentDirectories(output));
   } catch (error) {
@@ -98,192 +91,119 @@ app.get('/api/hf/files', async (req, res) => {
   }
 });
 
-// 2. Upload Files
 app.post('/api/hf/upload-multiple', upload.array('files'), async (req, res) => {
   if (!hfCheckConfig(res)) return;
   if (!req.files || req.files.length === 0) return res.status(400).json({ error: 'No files uploaded' });
-
   const tempFiles = req.files;
   try {
     const paths = req.body.paths ? (Array.isArray(req.body.paths) ? req.body.paths : [req.body.paths]) : [];
-    
-    const filesToUpload = tempFiles.map((f, i) => {
-        return {
-            path: paths[i] || f.originalname,
-            content: pathToFileURL(f.path) 
-        };
-    });
-
-    await uploadFiles({ 
-      repo: `buckets/${HF_BUCKET}`, 
-      repoType: 'bucket', 
-      files: filesToUpload, 
-      accessToken: HF_TOKEN 
-    });
-    
+    const filesToUpload = tempFiles.map((f, i) => ({
+        path: paths[i] || f.originalname,
+        content: pathToFileURL(f.path) 
+    }));
+    await uploadFiles({ repo: `buckets/${HF_BUCKET}`, repoType: 'bucket', files: filesToUpload, accessToken: HF_TOKEN });
     res.json({ message: 'HF bucket files uploaded successfully' });
   } catch (error) {
-    res.status(500).json({ error: error.message || 'Could not upload multiple files to HF bucket' });
+    res.status(500).json({ error: error.message || 'Could not upload files' });
   } finally {
     cleanup(tempFiles);
   }
 });
 
-// 3. Create Folder
 app.post('/api/hf/create-folder', async (req, res) => {
   if (!hfCheckConfig(res)) return;
   const { folderPath } = req.body;
-  if (!folderPath) return res.status(400).json({ error: 'folderPath is required' });
-
   try {
-    await uploadFiles({
-      repo: `buckets/${HF_BUCKET}`,
-      repoType: 'bucket',
-      files: [{ path: `${folderPath}/.keep`, content: new Blob(['']) }],
-      accessToken: HF_TOKEN,
-    });
-    res.json({ message: 'HF folder created successfully' });
-  } catch (error) {
-    res.status(500).json({ error: 'Could not create folder in HF bucket', details: error.message });
-  }
-});
-
-// 4. Delete Single File
-app.delete('/api/hf/delete/*', async (req, res) => {
-  if (!hfCheckConfig(res)) return;
-  const filePath = req.params[0];
-  try {
-    await deleteFile({ repo: `buckets/${HF_BUCKET}`, repoType: 'bucket', path: filePath, accessToken: HF_TOKEN });
-    res.json({ message: 'Deleted from HF bucket successfully' });
-  } catch (error) {
-    res.status(500).json({ error: 'Could not delete file from HF bucket', details: error.message });
-  }
-});
-
-// 5. Delete Multiple Files (Checkboxes)
-app.post('/api/hf/delete-multiple', async (req, res) => {
-  if (!hfCheckConfig(res)) return;
-  const { filenames } = req.body;
-  if (!filenames || !Array.isArray(filenames)) return res.status(400).json({ error: 'No files provided' });
-
-  try {
-    for (const file of filenames) {
-      await deleteFile({ repo: `buckets/${HF_BUCKET}`, repoType: 'bucket', path: file, accessToken: HF_TOKEN });
-    }
-    res.json({ message: 'Selected files deleted successfully' });
-  } catch (error) {
-    res.status(500).json({ error: 'Could not delete files', details: error.message });
-  }
-});
-
-// 6. Download File (FIXED: Added Support for IDM Resuming / Range Requests)
-app.get('/api/hf/download/*', async (req, res) => {
-  if (!hfCheckConfig(res)) return;
-  const filePath = req.params[0];
-  
-  try {
-    // A. Intercept the correct download URL securely
-    let targetUrl = '';
-    const originalFetch = globalThis.fetch;
-    globalThis.fetch = async (url, options) => {
-      targetUrl = url.toString();
-      throw new Error("INTERCEPTED");
-    };
-    
-    try {
-      await downloadFile({ repo: `buckets/${HF_BUCKET}`, repoType: 'bucket', path: filePath, accessToken: HF_TOKEN });
-    } catch (e) {
-      if (e.message !== "INTERCEPTED") throw e;
-    } finally {
-      globalThis.fetch = originalFetch;
-    }
-
-    if (!targetUrl) return res.status(500).json({ error: "Failed to resolve HF URL" });
-
-    // B. Prepare headers (Forward the 'Range' header if IDM asks for resuming)
-    const fetchHeaders = { 'Authorization': `Bearer ${HF_TOKEN}` };
-    if (req.headers.range) {
-      fetchHeaders['Range'] = req.headers.range;
-    }
-
-    // C. Fetch from HF with Range support
-    const response = await fetch(targetUrl, { headers: fetchHeaders });
-
-    if (!response.ok) {
-      return res.status(response.status).json({ error: 'File not found or access denied in HF bucket' });
-    }
-
-    // D. Tell IDM and browsers that we support Resuming!
-    res.setHeader('Accept-Ranges', 'bytes');
-    res.setHeader('Content-Disposition', `attachment; filename="${path.basename(filePath)}"`);
-    
-    // Forward Content-Type, Content-Length, and Content-Range from Hugging Face
-    if (response.headers.has('content-type')) res.setHeader('Content-Type', response.headers.get('content-type'));
-    if (response.headers.has('content-length')) res.setHeader('Content-Length', response.headers.get('content-length'));
-    if (response.headers.has('content-range')) res.setHeader('Content-Range', response.headers.get('content-range'));
-
-    // Set Status: 206 Partial Content (Resuming) OR 200 OK (Full Download)
-    res.status(response.status);
-
-    // E. Pipe data directly to browser
-    const nodeStream = Readable.fromWeb(response.body);
-    nodeStream.pipe(res);
-
-  } catch (error) {
-    console.error('HF download error:', error.message);
-    if (!res.headersSent) {
-      res.status(500).json({ error: 'Could not stream from HF bucket', details: error.message });
-    }
-  }
-});
-
-// 7. Get Public URL (For the "Copy Link" button)
-app.get('/api/hf/public-url/*', async (req, res) => {
-  const filePath = req.params[0];
-  const proxyUrl = `${req.protocol}://${req.get('host')}/api/hf/download/${encodeURIComponent(filePath)}`;
-  res.json({ proxyUrl, url: proxyUrl }); 
-});
-
-// 8. Rename File
-app.post('/api/hf/rename', async (req, res) => {
-  if (!hfCheckConfig(res)) return;
-  const { oldPath, newPath } = req.body;
-  try {
-    const blob = await downloadFile({ repo: `buckets/${HF_BUCKET}`, repoType: 'bucket', path: oldPath, accessToken: HF_TOKEN });
-    if (!blob) return res.status(404).json({ error: 'File not found' });
-    
-    await uploadFiles({ repo: `buckets/${HF_BUCKET}`, repoType: 'bucket', files: [{ path: newPath, content: blob }], accessToken: HF_TOKEN });
-    await deleteFile({ repo: `buckets/${HF_BUCKET}`, repoType: 'bucket', path: oldPath, accessToken: HF_TOKEN });
-    
-    res.json({ message: 'Renamed successfully' });
+    await uploadFiles({ repo: `buckets/${HF_BUCKET}`, repoType: 'bucket', files: [{ path: `${folderPath}/.keep`, content: new Blob(['']) }], accessToken: HF_TOKEN });
+    res.json({ message: 'HF folder created' });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
 
-// 9. Move Multiple Files
+app.delete('/api/hf/delete/*', async (req, res) => {
+  if (!hfCheckConfig(res)) return;
+  try {
+    await deleteFile({ repo: `buckets/${HF_BUCKET}`, repoType: 'bucket', path: req.params[0], accessToken: HF_TOKEN });
+    res.json({ message: 'Deleted' });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/hf/delete-multiple', async (req, res) => {
+  if (!hfCheckConfig(res)) return;
+  const { filenames } = req.body;
+  try {
+    for (const file of filenames) await deleteFile({ repo: `buckets/${HF_BUCKET}`, repoType: 'bucket', path: file, accessToken: HF_TOKEN });
+    res.json({ message: 'Deleted' });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/hf/download/*', async (req, res) => {
+  if (!hfCheckConfig(res)) return;
+  const filePath = req.params[0];
+  try {
+    let targetUrl = '';
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async (url) => { targetUrl = url.toString(); throw new Error("INTERCEPTED"); };
+    try { await downloadFile({ repo: `buckets/${HF_BUCKET}`, repoType: 'bucket', path: filePath, accessToken: HF_TOKEN }); } 
+    catch (e) { if (e.message !== "INTERCEPTED") throw e; } 
+    finally { globalThis.fetch = originalFetch; }
+
+    if (!targetUrl) return res.status(500).json({ error: "URL resolution failed" });
+
+    const fetchHeaders = { 'Authorization': `Bearer ${HF_TOKEN}` };
+    if (req.headers.range) fetchHeaders['Range'] = req.headers.range;
+
+    const response = await fetch(targetUrl, { headers: fetchHeaders });
+    if (!response.ok) return res.status(response.status).json({ error: 'Not found' });
+
+    res.setHeader('Accept-Ranges', 'bytes');
+    res.setHeader('Content-Disposition', `attachment; filename="${path.basename(filePath)}"`);
+    if (response.headers.has('content-type')) res.setHeader('Content-Type', response.headers.get('content-type'));
+    if (response.headers.has('content-length')) res.setHeader('Content-Length', response.headers.get('content-length'));
+    if (response.headers.has('content-range')) res.setHeader('Content-Range', response.headers.get('content-range'));
+    
+    res.status(response.status);
+    Readable.fromWeb(response.body).pipe(res);
+  } catch (error) {
+    if (!res.headersSent) res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/hf/public-url/*', async (req, res) => {
+  const proxyUrl = `${req.protocol}://${req.get('host')}/api/hf/download/${encodeURIComponent(req.params[0])}`;
+  res.json({ proxyUrl, url: proxyUrl }); 
+});
+
+app.post('/api/hf/rename', async (req, res) => {
+  if (!hfCheckConfig(res)) return;
+  const { oldPath, newPath } = req.body;
+  try {
+    const blob = await downloadFile({ repo: `buckets/${HF_BUCKET}`, repoType: 'bucket', path: oldPath, accessToken: HF_TOKEN });
+    await uploadFiles({ repo: `buckets/${HF_BUCKET}`, repoType: 'bucket', files: [{ path: newPath, content: blob }], accessToken: HF_TOKEN });
+    await deleteFile({ repo: `buckets/${HF_BUCKET}`, repoType: 'bucket', path: oldPath, accessToken: HF_TOKEN });
+    res.json({ message: 'Renamed' });
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
 app.post('/api/hf/move', async (req, res) => {
   if (!hfCheckConfig(res)) return;
   const { files, destination } = req.body;
   try {
     for (const file of files) {
-      const fileName = path.basename(file);
-      const newPath = destination ? `${destination}/${fileName}` : fileName;
-      
+      const newPath = destination ? `${destination}/${path.basename(file)}` : path.basename(file);
       const blob = await downloadFile({ repo: `buckets/${HF_BUCKET}`, repoType: 'bucket', path: file, accessToken: HF_TOKEN });
       if (blob) {
         await uploadFiles({ repo: `buckets/${HF_BUCKET}`, repoType: 'bucket', files: [{ path: newPath, content: blob }], accessToken: HF_TOKEN });
         await deleteFile({ repo: `buckets/${HF_BUCKET}`, repoType: 'bucket', path: file, accessToken: HF_TOKEN });
       }
     }
-    res.json({ message: 'Moved successfully' });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
+    res.json({ message: 'Moved' });
+  } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
-
-// --- SERVER START ---
-app.listen(PORT, () => {
-  console.log(`Server running at http://localhost:${PORT}`);
-});
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));

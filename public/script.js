@@ -11,6 +11,7 @@ const showLocalBtn = document.getElementById('showLocalBtn');
 const showHfBtn = document.getElementById('showHfBtn');
 const sortBySelect = document.getElementById('sortBy');
 const sortOrderSelect = document.getElementById('sortOrder');
+const pinFoldersCheckbox = document.getElementById('pinFolders'); // <-- ADDED: Pin Folders Checkbox
 const selectAllCheckbox = document.getElementById('selectAll');
 const createFolderBtn = document.getElementById('createFolderBtn');
 const moveSelectedBtn = document.getElementById('moveSelectedBtn');
@@ -34,10 +35,32 @@ function setStatus(message, type = 'success', target = uploadStatus) {
   }, 3000);
 }
 
+// <-- ADDED: Cool icons for different file types
+function getFileIcon(name, isFolder) {
+  if (isFolder) return '📁';
+  const ext = name.split('.').pop().toLowerCase();
+  if (['mp4', 'mkv', 'avi', 'mov', 'webm'].includes(ext)) return '🎬';
+  if (['mp3', 'wav', 'ogg', 'flac'].includes(ext)) return '🎵';
+  if (['zip', 'rar', '7z', 'tar', 'gz'].includes(ext)) return '📦';
+  if (['txt', 'md', 'csv', 'json', 'xml'].includes(ext)) return '📝';
+  if (['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext)) return '🖼️';
+  return '📄';
+}
+
 function sortFileList(items) {
   const field = sortBySelect.value;
   const order = sortOrderSelect.value;
+  const pinFolders = pinFoldersCheckbox ? pinFoldersCheckbox.checked : false; // <-- ADDED: Pin Folders
+
   return [...items].sort((a, b) => {
+    // <-- ADDED: Pin folders logic
+    if (pinFolders) {
+      const aIsDir = a.type === 'directory';
+      const bIsDir = b.type === 'directory';
+      if (aIsDir && !bIsDir) return -1;
+      if (!aIsDir && bIsDir) return 1;
+    }
+
     if (field === 'size') {
       return order === 'asc' ? a.size - b.size : b.size - a.size;
     }
@@ -86,7 +109,6 @@ async function traverseFileTree(entry, path = '') {
     return new Promise((resolve, reject) => {
       entry.file((file) => {
         const relativePath = path ? `${path}/${file.name}` : file.name;
-        // Modify the original file object to have the correct webkitRelativePath
         Object.defineProperty(file, 'webkitRelativePath', {
           value: relativePath,
           writable: false,
@@ -123,7 +145,6 @@ async function getDroppedFiles(dataTransfer) {
         if (entry.isFile) {
           const file = item.getAsFile();
           if (file) {
-            // For single files dropped, set webkitRelativePath to just the filename
             if (!file.webkitRelativePath) {
               Object.defineProperty(file, 'webkitRelativePath', {
                 value: file.name,
@@ -139,9 +160,7 @@ async function getDroppedFiles(dataTransfer) {
           files.push(...folderFiles);
         }
       } else {
-        // fallback to direct file list
         const fallbackFiles = Array.from(dataTransfer.files);
-        // Set webkitRelativePath for fallback files
         fallbackFiles.forEach(file => {
           if (!file.webkitRelativePath) {
             Object.defineProperty(file, 'webkitRelativePath', {
@@ -245,13 +264,13 @@ async function uploadFiles(fileList, isFolder = false) {
       const percentComplete = (event.loaded / event.total) * 100;
       progressBar.style.width = `${percentComplete}%`;
 
-      const elapsedTime = (Date.now() - startTime) / 1000; // in seconds
+      const elapsedTime = (Date.now() - startTime) / 1000;
       if (elapsedTime > 0) {
-        const speed = event.loaded / elapsedTime; // bytes per second
+        const speed = event.loaded / elapsedTime;
         speedElement.textContent = `${formatBytes(speed)}/s`;
 
         const remainingBytes = event.total - event.loaded;
-        const timeRemaining = remainingBytes / speed; // in seconds
+        const timeRemaining = remainingBytes / speed;
         timeRemainingElement.textContent = `${Math.round(timeRemaining)}s remaining`;
       }
     }
@@ -308,6 +327,7 @@ showHfBtn.addEventListener('click', () => {
 
 sortBySelect.addEventListener('change', () => loadFiles(currentTarget));
 sortOrderSelect.addEventListener('change', () => loadFiles(currentTarget));
+if(pinFoldersCheckbox) pinFoldersCheckbox.addEventListener('change', () => loadFiles(currentTarget)); // <-- ADDED: Listen to Pin Checkbox
 
 selectAllCheckbox.addEventListener('change', (event) => {
   const checked = event.target.checked;
@@ -353,7 +373,6 @@ clearSelectionBtn.addEventListener('click', () => {
 createFolderBtn.addEventListener('click', async () => {
   const folderName = prompt('Enter folder name:');
   if (!folderName) return;
-  // Prepend current path if we're in a subfolder
   const folderPath = currentPath ? `${currentPath}/${folderName}` : folderName;
   try {
     const response = await fetch(currentTarget === 'hf' ? '/api/hf/create-folder' : '/api/create-folder', {
@@ -375,7 +394,7 @@ moveSelectedBtn.addEventListener('click', async () => {
     return;
   }
   const destination = prompt('Enter destination folder path (leave empty for root):');
-  if (destination === null) return; // Cancelled
+  if (destination === null) return; 
   try {
     const response = await fetch(currentTarget === 'hf' ? '/api/hf/move' : '/api/move', {
       method: 'POST',
@@ -406,8 +425,6 @@ async function loadFiles(target = currentTarget) {
     }
 
     const prefix = currentPath ? `${currentPath}/` : '';
-
-    // Build direct child view (one level-depth) with deduped folders & files
     const directMap = new Map();
 
     for (const file of allFiles) {
@@ -460,7 +477,6 @@ async function loadFiles(target = currentTarget) {
 
     cachedFiles = sortFileList(files.map((file) => ({ ...file, path: file.path || file.filename })));
 
-    // Add breadcrumb navigation
     const breadcrumb = currentPath ? 
       `<div class="breadcrumb">
         <button class="btn btn-link" onclick="navigateToPath('')">🏠 Root</button> / 
@@ -475,10 +491,18 @@ async function loadFiles(target = currentTarget) {
         const name = file.path;
         const fullPath = file.originalPath || file.path;
         const size = file.size || 0;
-        const date = file.updatedAt || file.uploadedAt || 'unknown';
         const selected = selectedFiles.has(fullPath);
         const encoded = encodeURIComponent(fullPath);
         const isFolder = file.type === 'directory';
+
+        // <-- ADDED: Beautiful clean dates
+        let dateText = '';
+        if (file.updatedAt || file.uploadedAt) {
+          const d = new Date(file.updatedAt || file.uploadedAt);
+          if (!isNaN(d.getTime())) {
+            dateText = d.toLocaleString();
+          }
+        }
 
         return `
           <div class="file-item">
@@ -486,8 +510,10 @@ async function loadFiles(target = currentTarget) {
               <input type="checkbox" onchange="toggleSelection('${encoded}')" ${selected ? 'checked' : ''}>
             </label>
             <div class="file-info">
-              <div class="file-name">${isFolder ? '📁' : '📄'} ${escapeHtml(name)}</div>
-              <div class="file-size">${isFolder ? 'Folder' : formatBytes(size)} ${date ? '| ' + date : ''}</div>
+              <!-- ADDED: Dynamic File Icons -->
+              <div class="file-name">${getFileIcon(name, isFolder)} ${escapeHtml(name)}</div>
+              <!-- ADDED: Clean Date Formatting -->
+              <div class="file-size">${isFolder ? 'Folder' : formatBytes(size)} ${dateText ? '| ' + dateText : ''}</div>
             </div>
             <div class="file-actions">
               ${isFolder ? `
@@ -530,11 +556,8 @@ window.downloadFile = async (encodedName, target) => {
       const resp = await fetch(`/api/hf/public-url/${encodeURIComponent(name)}`);
       if (!resp.ok) throw new Error('Cannot get HF URL');
       const json = await resp.json();
-      // For private buckets (with token), use proxy download to avoid third-party cookie issues
-      // For public buckets, use direct HF URL
       const downloadUrl = window.APP_CONFIG?.hasHfToken ? json.proxyUrl : json.url;
       if (window.APP_CONFIG?.hasHfToken) {
-        // Use proxy download for private buckets
         const a = document.createElement('a');
         a.href = downloadUrl;
         a.download = name.split('/').pop();
@@ -543,7 +566,6 @@ window.downloadFile = async (encodedName, target) => {
         document.body.removeChild(a);
         setStatus('Downloading via proxy', 'success');
       } else {
-        // Use direct HF URL for public buckets
         window.open(downloadUrl, '_blank');
         setStatus('Opening direct HF download', 'success');
       }
@@ -570,7 +592,6 @@ window.copyLink = async (encodedName, target) => {
       const resp = await fetch(`/api/hf/public-url/${encodeURIComponent(name)}`);
       if (!resp.ok) throw new Error('Cannot get HF URL');
       const json = await resp.json();
-      // For private buckets, copy proxy URL; for public, copy direct HF URL
       const linkUrl = window.APP_CONFIG?.hasHfToken ? json.proxyUrl : json.url;
       await navigator.clipboard.writeText(linkUrl);
       setStatus('HF link copied to clipboard', 'success');
@@ -616,7 +637,6 @@ window.renameFile = async (encodedName, target) => {
 
 window.openFolder = async (encodedName, target) => {
   const fullPath = decodeURIComponent(encodedName);
-  // fullPath is already absolute from root, based on list items
   navigateToPath(fullPath);
 };
 
