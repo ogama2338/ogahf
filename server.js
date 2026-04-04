@@ -4,6 +4,7 @@ const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
 const { pathToFileURL } = require('url'); 
+const { Readable } = require('stream'); // <--- Added to handle RAM-safe streaming
 const { listFiles, uploadFiles, deleteFile, downloadFile } = require('@huggingface/hub');
 
 const app = express();
@@ -159,7 +160,7 @@ app.delete('/api/hf/delete/*', async (req, res) => {
   }
 });
 
-// 5. MISSING ROUTE FIXED: Delete Multiple Files (Checkboxes)
+// 5. Delete Multiple Files (Checkboxes)
 app.post('/api/hf/delete-multiple', async (req, res) => {
   if (!hfCheckConfig(res)) return;
   const { filenames } = req.body;
@@ -175,31 +176,65 @@ app.post('/api/hf/delete-multiple', async (req, res) => {
   }
 });
 
-// 6. Download File
+// 6. Download File (FIXED: RAM-SAFE STREAMING)
 app.get('/api/hf/download/*', async (req, res) => {
   if (!hfCheckConfig(res)) return;
   const filePath = req.params[0];
+  
   try {
-    const blob = await downloadFile({ repo: `buckets/${HF_BUCKET}`, repoType: 'bucket', path: filePath, accessToken: HF_TOKEN });
-    if (!blob) return res.status(404).json({ error: 'File not found in HF bucket' });
+    // A. Intercept the correct download URL securely
+    let targetUrl = '';
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async (url, options) => {
+      targetUrl = url.toString();
+      throw new Error("INTERCEPTED");
+    };
+    
+    try {
+      await downloadFile({ repo: `buckets/${HF_BUCKET}`, repoType: 'bucket', path: filePath, accessToken: HF_TOKEN });
+    } catch (e) {
+      if (e.message !== "INTERCEPTED") throw e;
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
 
-    const buffer = Buffer.from(await blob.arrayBuffer());
+    if (!targetUrl) return res.status(500).json({ error: "Failed to resolve HF URL" });
+
+    // B. Create a memory-safe stream
+    const response = await fetch(targetUrl, {
+      headers: { 'Authorization': `Bearer ${HF_TOKEN}` }
+    });
+
+    if (!response.ok) {
+      return res.status(response.status).json({ error: 'File not found or access denied in HF bucket' });
+    }
+
+    // Set headers
     res.setHeader('Content-Disposition', `attachment; filename="${path.basename(filePath)}"`);
-    res.setHeader('Content-Type', 'application/octet-stream');
-    res.send(buffer);
+    res.setHeader('Content-Type', response.headers.get('content-type') || 'application/octet-stream');
+    const contentLength = response.headers.get('content-length');
+    if (contentLength) res.setHeader('Content-Length', contentLength);
+
+    // C. Pipe data directly to browser without saving to RAM
+    const nodeStream = Readable.fromWeb(response.body);
+    nodeStream.pipe(res);
+
   } catch (error) {
-    res.status(500).json({ error: 'Could not download from HF bucket', details: error.message });
+    console.error('HF download error:', error.message);
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'Could not stream from HF bucket', details: error.message });
+    }
   }
 });
 
-// 7. MISSING ROUTE FIXED: Get Public URL (For the "Copy Link" button)
+// 7. Get Public URL (For the "Copy Link" button)
 app.get('/api/hf/public-url/*', async (req, res) => {
   const filePath = req.params[0];
   const proxyUrl = `${req.protocol}://${req.get('host')}/api/hf/download/${encodeURIComponent(filePath)}`;
   res.json({ proxyUrl, url: proxyUrl }); 
 });
 
-// 8. MISSING ROUTE FIXED: Rename File
+// 8. Rename File
 app.post('/api/hf/rename', async (req, res) => {
   if (!hfCheckConfig(res)) return;
   const { oldPath, newPath } = req.body;
@@ -216,7 +251,7 @@ app.post('/api/hf/rename', async (req, res) => {
   }
 });
 
-// 9. MISSING ROUTE FIXED: Move Multiple Files
+// 9. Move Multiple Files
 app.post('/api/hf/move', async (req, res) => {
   if (!hfCheckConfig(res)) return;
   const { files, destination } = req.body;
