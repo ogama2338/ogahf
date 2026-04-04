@@ -4,7 +4,7 @@ const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
 const { pathToFileURL } = require('url'); 
-const { Readable } = require('stream'); // <--- Added to handle RAM-safe streaming
+const { Readable } = require('stream'); 
 const { listFiles, uploadFiles, deleteFile, downloadFile } = require('@huggingface/hub');
 
 const app = express();
@@ -176,7 +176,7 @@ app.post('/api/hf/delete-multiple', async (req, res) => {
   }
 });
 
-// 6. Download File (FIXED: RAM-SAFE STREAMING)
+// 6. Download File (FIXED: Added Support for IDM Resuming / Range Requests)
 app.get('/api/hf/download/*', async (req, res) => {
   if (!hfCheckConfig(res)) return;
   const filePath = req.params[0];
@@ -200,22 +200,32 @@ app.get('/api/hf/download/*', async (req, res) => {
 
     if (!targetUrl) return res.status(500).json({ error: "Failed to resolve HF URL" });
 
-    // B. Create a memory-safe stream
-    const response = await fetch(targetUrl, {
-      headers: { 'Authorization': `Bearer ${HF_TOKEN}` }
-    });
+    // B. Prepare headers (Forward the 'Range' header if IDM asks for resuming)
+    const fetchHeaders = { 'Authorization': `Bearer ${HF_TOKEN}` };
+    if (req.headers.range) {
+      fetchHeaders['Range'] = req.headers.range;
+    }
+
+    // C. Fetch from HF with Range support
+    const response = await fetch(targetUrl, { headers: fetchHeaders });
 
     if (!response.ok) {
       return res.status(response.status).json({ error: 'File not found or access denied in HF bucket' });
     }
 
-    // Set headers
+    // D. Tell IDM and browsers that we support Resuming!
+    res.setHeader('Accept-Ranges', 'bytes');
     res.setHeader('Content-Disposition', `attachment; filename="${path.basename(filePath)}"`);
-    res.setHeader('Content-Type', response.headers.get('content-type') || 'application/octet-stream');
-    const contentLength = response.headers.get('content-length');
-    if (contentLength) res.setHeader('Content-Length', contentLength);
+    
+    // Forward Content-Type, Content-Length, and Content-Range from Hugging Face
+    if (response.headers.has('content-type')) res.setHeader('Content-Type', response.headers.get('content-type'));
+    if (response.headers.has('content-length')) res.setHeader('Content-Length', response.headers.get('content-length'));
+    if (response.headers.has('content-range')) res.setHeader('Content-Range', response.headers.get('content-range'));
 
-    // C. Pipe data directly to browser without saving to RAM
+    // Set Status: 206 Partial Content (Resuming) OR 200 OK (Full Download)
+    res.status(response.status);
+
+    // E. Pipe data directly to browser
     const nodeStream = Readable.fromWeb(response.body);
     nodeStream.pipe(res);
 
