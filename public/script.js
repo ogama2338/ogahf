@@ -11,7 +11,7 @@ const showLocalBtn = document.getElementById('showLocalBtn');
 const showHfBtn = document.getElementById('showHfBtn');
 const sortBySelect = document.getElementById('sortBy');
 const sortOrderSelect = document.getElementById('sortOrder');
-const pinFoldersCheckbox = document.getElementById('pinFolders'); // <-- ADDED: Pin Folders Checkbox
+const pinFoldersCheckbox = document.getElementById('pinFolders'); // <-- NEW
 const selectAllCheckbox = document.getElementById('selectAll');
 const createFolderBtn = document.getElementById('createFolderBtn');
 const moveSelectedBtn = document.getElementById('moveSelectedBtn');
@@ -26,6 +26,7 @@ let currentTarget = 'hf';
 let currentPath = ''; // Current folder path for navigation
 let selectedFiles = new Set();
 let cachedFiles = [];
+let bucketFilesMap = new Map(); // <-- NEW: For instant conflict checks
 
 function setStatus(message, type = 'success', target = uploadStatus) {
   target.textContent = message;
@@ -35,7 +36,7 @@ function setStatus(message, type = 'success', target = uploadStatus) {
   }, 3000);
 }
 
-// <-- ADDED: Cool icons for different file types
+// <-- NEW: Dynamic File Icons
 function getFileIcon(name, isFolder) {
   if (isFolder) return '📁';
   const ext = name.split('.').pop().toLowerCase();
@@ -50,10 +51,10 @@ function getFileIcon(name, isFolder) {
 function sortFileList(items) {
   const field = sortBySelect.value;
   const order = sortOrderSelect.value;
-  const pinFolders = pinFoldersCheckbox ? pinFoldersCheckbox.checked : false; // <-- ADDED: Pin Folders
+  const pinFolders = pinFoldersCheckbox ? pinFoldersCheckbox.checked : false; // <-- NEW
 
   return [...items].sort((a, b) => {
-    // <-- ADDED: Pin folders logic
+    // <-- NEW: Pin Folders Logic
     if (pinFolders) {
       const aIsDir = a.type === 'directory';
       const bIsDir = b.type === 'directory';
@@ -88,7 +89,6 @@ function updateSelectionControls() {
 function readAllDirectoryEntries(reader) {
   return new Promise((resolve, reject) => {
     const entries = [];
-
     function readEntries() {
       reader.readEntries((results) => {
         if (!results.length) {
@@ -99,7 +99,6 @@ function readAllDirectoryEntries(reader) {
         }
       }, reject);
     }
-
     readEntries();
   });
 }
@@ -124,20 +123,17 @@ async function traverseFileTree(entry, path = '') {
     const reader = entry.createReader();
     const entries = await readAllDirectoryEntries(reader);
     const files = [];
-    
     for (const entr of entries) {
       const nestedFiles = await traverseFileTree(entr, path ? `${path}/${entry.name}` : entry.name);
       files.push(...nestedFiles);
     }
     return files;
   }
-
   return [];
 }
 
 async function getDroppedFiles(dataTransfer) {
   const files = [];
-
   if (dataTransfer.items && dataTransfer.items.length) {
     for (const item of dataTransfer.items) {
       const entry = item.webkitGetAsEntry ? item.webkitGetAsEntry() : null;
@@ -188,7 +184,6 @@ async function getDroppedFiles(dataTransfer) {
     });
     return fallbackFiles;
   }
-
   return files;
 }
 
@@ -206,13 +201,11 @@ uploadArea.addEventListener('dragleave', () => {
 uploadArea.addEventListener('drop', async (e) => {
   e.preventDefault();
   uploadArea.classList.remove('dragover');
-
   const droppedFiles = await getDroppedFiles(e.dataTransfer);
   if (droppedFiles.length === 0) {
     setStatus('No files found in dropped data', 'error');
     return;
   }
-
   await uploadFiles(droppedFiles, true);
 });
 
@@ -227,9 +220,7 @@ uploadBtn.addEventListener('click', async () => {
 uploadFolderBtn.addEventListener('click', () => folderInput.click());
 
 folderInput.addEventListener('change', async () => {
-  if (folderInput.files.length === 0) {
-    return;
-  }
+  if (folderInput.files.length === 0) return;
   await uploadFiles(folderInput.files, true);
   folderInput.value = '';
 });
@@ -239,13 +230,33 @@ async function uploadFiles(fileList, isFolder = false) {
   const baseUrl = target === 'hf' ? '/api/hf' : '/api';
   const formData = new FormData();
 
+  // <-- NEW: Conflict Check logic integrated into your original loop
+  const filesToProcess = [];
   for (const file of fileList) {
     const relativePath = file.webkitRelativePath || file.name;
-    const fullPath = currentPath ? `${currentPath}/${relativePath}` : relativePath;
+    let fullPath = currentPath ? `${currentPath}/${relativePath}` : relativePath;
+
+    // Only check conflicts if uploading to HF
+    if (target === 'hf' && bucketFilesMap.has(fullPath)) {
+        const existingSize = formatBytes(bucketFilesMap.get(fullPath));
+        const userInput = prompt(
+            `⚠️ CONFLICT: "${fullPath}" exists!\nSize: ${existingSize}\n\n- To REPLACE: Click OK\n- To RENAME: Type new name and click OK\n- To SKIP: Click Cancel`, 
+            fullPath
+        );
+        if (userInput === null) continue; // Skip
+        fullPath = userInput;
+    }
+
     const renamedFile = new File([file], fullPath, { type: file.type });
-    formData.append('files', renamedFile, fullPath);
-    formData.append('paths', fullPath);
+    filesToProcess.push({ file: renamedFile, path: fullPath });
   }
+
+  if (filesToProcess.length === 0) return;
+
+  filesToProcess.forEach(item => {
+    formData.append('files', item.file, item.path);
+    formData.append('paths', item.path);
+  });
 
   uploadBtn.disabled = true;
   uploadBtn.textContent = 'Uploading...';
@@ -263,12 +274,10 @@ async function uploadFiles(fileList, isFolder = false) {
     if (event.lengthComputable) {
       const percentComplete = (event.loaded / event.total) * 100;
       progressBar.style.width = `${percentComplete}%`;
-
       const elapsedTime = (Date.now() - startTime) / 1000;
       if (elapsedTime > 0) {
         const speed = event.loaded / elapsedTime;
         speedElement.textContent = `${formatBytes(speed)}/s`;
-
         const remainingBytes = event.total - event.loaded;
         const timeRemaining = remainingBytes / speed;
         timeRemainingElement.textContent = `${Math.round(timeRemaining)}s remaining`;
@@ -280,18 +289,17 @@ async function uploadFiles(fileList, isFolder = false) {
     uploadBtn.disabled = false;
     uploadBtn.textContent = 'Upload Selected';
     uploadProgressContainer.style.display = 'none';
-
     if (xhr.status >= 200 && xhr.status < 300) {
-      setStatus(`Uploaded ${fileList.length} file(s) to ${target.toUpperCase()}`, 'success');
+      setStatus(`Uploaded successfully to ${target.toUpperCase()}`, 'success');
       fileInput.value = '';
       if(folderInput) folderInput.value = '';
       await loadFiles(currentTarget);
     } else {
       try {
         const err = JSON.parse(xhr.responseText);
-        setStatus(`Error uploading files: ${err.error || 'Upload failed'}`, 'error');
+        setStatus(`Error: ${err.error || 'Upload failed'}`, 'error');
       } catch (e) {
-        setStatus(`Error uploading files: ${xhr.statusText}`, 'error');
+        setStatus(`Error: ${xhr.statusText}`, 'error');
       }
     }
   };
@@ -300,34 +308,19 @@ async function uploadFiles(fileList, isFolder = false) {
     uploadBtn.disabled = false;
     uploadBtn.textContent = 'Upload Selected';
     uploadProgressContainer.style.display = 'none';
-    setStatus('Error uploading files: Network error.', 'error');
+    setStatus('Network error.', 'error');
   };
 
   xhr.send(formData);
 }
 
-
-loadHfBtn.addEventListener('click', () => {
-  currentTarget = 'hf';
-  currentPath = '';
-  loadFiles('hf');
-});
-
-showLocalBtn.addEventListener('click', () => {
-  currentTarget = 'local';
-  currentPath = '';
-  loadFiles('local');
-});
-
-showHfBtn.addEventListener('click', () => {
-  currentTarget = 'hf';
-  currentPath = '';
-  loadFiles('hf');
-});
+loadHfBtn.addEventListener('click', () => { currentTarget = 'hf'; currentPath = ''; loadFiles('hf'); });
+showLocalBtn.addEventListener('click', () => { currentTarget = 'local'; currentPath = ''; loadFiles('local'); });
+showHfBtn.addEventListener('click', () => { currentTarget = 'hf'; currentPath = ''; loadFiles('hf'); });
 
 sortBySelect.addEventListener('change', () => loadFiles(currentTarget));
 sortOrderSelect.addEventListener('change', () => loadFiles(currentTarget));
-if(pinFoldersCheckbox) pinFoldersCheckbox.addEventListener('change', () => loadFiles(currentTarget)); // <-- ADDED: Listen to Pin Checkbox
+if(pinFoldersCheckbox) pinFoldersCheckbox.addEventListener('change', () => loadFiles(currentTarget)); // <-- NEW
 
 selectAllCheckbox.addEventListener('change', (event) => {
   const checked = event.target.checked;
@@ -341,26 +334,21 @@ selectAllCheckbox.addEventListener('change', (event) => {
 
 deleteSelectedBtn.addEventListener('click', async () => {
   if (selectedFiles.size === 0) return;
-
   if (!confirm(`Delete ${selectedFiles.size} selected file(s)?`)) return;
   const target = currentTarget;
   const body = JSON.stringify({ filenames: Array.from(selectedFiles) });
-
   try {
     const res = await fetch(`${target === 'hf' ? '/api/hf/delete-multiple' : '/api/delete-multiple'}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body,
     });
-    if (!res.ok) {
-      const err = await res.json();
-      throw new Error(err.error || 'Delete selected failed');
-    }
-    setStatus('Selected files deleted successfully', 'success');
+    if (!res.ok) throw new Error((await res.json()).error || 'Delete failed');
+    setStatus('Selected files deleted', 'success');
     selectedFiles.clear();
     await loadFiles(currentTarget);
   } catch (err) {
-    setStatus('Error deleting selected files: ' + err.message, 'error');
+    setStatus('Error: ' + err.message, 'error');
   }
 });
 
@@ -381,19 +369,16 @@ createFolderBtn.addEventListener('click', async () => {
       body: JSON.stringify({ folderPath })
     });
     if (!response.ok) throw new Error(await response.text());
-    setStatus('Folder created successfully', 'success');
+    setStatus('Folder created', 'success');
     await loadFiles(currentTarget);
   } catch (err) {
-    setStatus('Error creating folder: ' + err.message, 'error');
+    setStatus('Error: ' + err.message, 'error');
   }
 });
 
 moveSelectedBtn.addEventListener('click', async () => {
-  if (selectedFiles.size === 0) {
-    setStatus('No files selected', 'error');
-    return;
-  }
-  const destination = prompt('Enter destination folder path (leave empty for root):');
+  if (selectedFiles.size === 0) return setStatus('No files selected', 'error');
+  const destination = prompt('Enter destination folder path:');
   if (destination === null) return; 
   try {
     const response = await fetch(currentTarget === 'hf' ? '/api/hf/move' : '/api/move', {
@@ -402,12 +387,12 @@ moveSelectedBtn.addEventListener('click', async () => {
       body: JSON.stringify({ files: Array.from(selectedFiles), destination: destination || '' })
     });
     if (!response.ok) throw new Error(await response.text());
-    setStatus('Files moved successfully', 'success');
+    setStatus('Files moved', 'success');
     selectedFiles.clear();
     selectAllCheckbox.checked = false;
     await loadFiles(currentTarget);
   } catch (err) {
-    setStatus('Error moving files: ' + err.message, 'error');
+    setStatus('Error: ' + err.message, 'error');
   }
 });
 
@@ -416,8 +401,14 @@ async function loadFiles(target = currentTarget) {
     const response = await fetch(target === 'hf' ? '/api/hf/files' : '/api/files');
     const allFiles = await response.json();
 
+    // <-- NEW: Update conflict map instantly
+    bucketFilesMap.clear();
+    if (Array.isArray(allFiles)) {
+      allFiles.forEach(f => { if(f.type !== 'directory') bucketFilesMap.set(f.path, f.size); });
+    }
+
     if (!Array.isArray(allFiles) || allFiles.length === 0) {
-      filesList.innerHTML = '<p>No files yet. Upload one to get started!</p>';
+      filesList.innerHTML = '<p>No files yet.</p>';
       cachedFiles = [];
       selectedFiles.clear();
       updateSelectionControls();
@@ -430,43 +421,24 @@ async function loadFiles(target = currentTarget) {
     for (const file of allFiles) {
       const fullPath = file.path || file.filename || '';
       if (!fullPath.startsWith(prefix) || fullPath === currentPath) continue;
-
       const relative = fullPath.slice(prefix.length);
       const firstSegment = relative.split('/')[0];
       const isDirect = relative === firstSegment;
-
       if (!directMap.has(firstSegment)) {
         if (isDirect) {
-          directMap.set(firstSegment, {
-            ...file,
-            path: firstSegment,
-            originalPath: fullPath,
-          });
+          directMap.set(firstSegment, { ...file, path: firstSegment, originalPath: fullPath });
         } else {
-          directMap.set(firstSegment, {
-            path: firstSegment,
-            type: 'directory',
-            size: 0,
-            updatedAt: file.updatedAt || file.uploadedAt || null,
-            originalPath: `${prefix}${firstSegment}`,
-          });
+          directMap.set(firstSegment, { path: firstSegment, type: 'directory', size: 0, updatedAt: file.updatedAt || file.uploadedAt || null, originalPath: `${prefix}${firstSegment}` });
         }
       } else if (!isDirect) {
         const existing = directMap.get(firstSegment);
         if (existing.type !== 'directory') {
-          directMap.set(firstSegment, {
-            path: firstSegment,
-            type: 'directory',
-            size: 0,
-            updatedAt: file.updatedAt || file.uploadedAt || null,
-            originalPath: `${prefix}${firstSegment}`,
-          });
+          directMap.set(firstSegment, { path: firstSegment, type: 'directory', size: 0, updatedAt: file.updatedAt || file.uploadedAt || null, originalPath: `${prefix}${firstSegment}` });
         }
       }
     }
 
     const files = Array.from(directMap.values());
-
     if (files.length === 0) {
       filesList.innerHTML = '<p>This folder is empty.</p>';
       cachedFiles = [];
@@ -495,13 +467,11 @@ async function loadFiles(target = currentTarget) {
         const encoded = encodeURIComponent(fullPath);
         const isFolder = file.type === 'directory';
 
-        // <-- ADDED: Beautiful clean dates
+        // <-- NEW: Beautiful Date formatting
         let dateText = '';
         if (file.updatedAt || file.uploadedAt) {
           const d = new Date(file.updatedAt || file.uploadedAt);
-          if (!isNaN(d.getTime())) {
-            dateText = d.toLocaleString();
-          }
+          if (!isNaN(d.getTime())) dateText = d.toLocaleString();
         }
 
         return `
@@ -510,9 +480,8 @@ async function loadFiles(target = currentTarget) {
               <input type="checkbox" onchange="toggleSelection('${encoded}')" ${selected ? 'checked' : ''}>
             </label>
             <div class="file-info">
-              <!-- ADDED: Dynamic File Icons -->
+              <!-- NEW: Icons added here -->
               <div class="file-name">${getFileIcon(name, isFolder)} ${escapeHtml(name)}</div>
-              <!-- ADDED: Clean Date Formatting -->
               <div class="file-size">${isFolder ? 'Folder' : formatBytes(size)} ${dateText ? '| ' + dateText : ''}</div>
             </div>
             <div class="file-actions">
@@ -531,10 +500,9 @@ async function loadFiles(target = currentTarget) {
         `;
       })
       .join('');
-
     updateSelectionControls();
   } catch (error) {
-    filesList.innerHTML = `<p>Error loading ${target === 'hf' ? 'HF' : 'local'} files</p>`;
+    filesList.innerHTML = `<p>Error loading files</p>`;
   }
 }
 
@@ -550,7 +518,6 @@ window.toggleSelection = (encodedName) => {
 
 window.downloadFile = async (encodedName, target) => {
   const name = decodeURIComponent(encodedName);
-
   if (target === 'hf') {
     try {
       const resp = await fetch(`/api/hf/public-url/${encodeURIComponent(name)}`);
@@ -567,15 +534,14 @@ window.downloadFile = async (encodedName, target) => {
         setStatus('Downloading via proxy', 'success');
       } else {
         window.open(downloadUrl, '_blank');
-        setStatus('Opening direct HF download', 'success');
+        setStatus('Opening download', 'success');
       }
       return;
     } catch (err) {
-      setStatus('HF download failed: ' + err.message, 'error');
+      setStatus('Download failed: ' + err.message, 'error');
       return;
     }
   }
-
   const a = document.createElement('a');
   a.href = `/api/download/${encodeURIComponent(name)}`;
   a.download = name.split('/').pop();
@@ -586,7 +552,6 @@ window.downloadFile = async (encodedName, target) => {
 
 window.copyLink = async (encodedName, target) => {
   const name = decodeURIComponent(encodedName);
-
   if (target === 'hf') {
     try {
       const resp = await fetch(`/api/hf/public-url/${encodeURIComponent(name)}`);
@@ -594,28 +559,24 @@ window.copyLink = async (encodedName, target) => {
       const json = await resp.json();
       const linkUrl = window.APP_CONFIG?.hasHfToken ? json.proxyUrl : json.url;
       await navigator.clipboard.writeText(linkUrl);
-      setStatus('HF link copied to clipboard', 'success');
+      setStatus('Link copied', 'success');
       return;
     } catch (err) {
-      setStatus('HF copy link failed: ' + err.message, 'error');
+      setStatus('Copy failed: ' + err.message, 'error');
       return;
     }
   }
-
   const url = `${window.location.origin}/api/download/${encodeURIComponent(name)}`;
   try {
     await navigator.clipboard.writeText(url);
-    setStatus('Link copied to clipboard', 'success');
-  } catch {
-    setStatus('Copy link failed', 'error');
-  }
+    setStatus('Link copied', 'success');
+  } catch { setStatus('Copy failed', 'error'); }
 };
 
 window.renameFile = async (encodedName, target) => {
   const name = decodeURIComponent(encodedName);
-  const newName = prompt('Enter new name (including folders):', name);
+  const newName = prompt('Enter new name:', name);
   if (!newName || newName === name) return;
-
   try {
     const endpoint = target === 'hf' ? '/api/hf/rename' : '/api/rename';
     const res = await fetch(endpoint, {
@@ -623,16 +584,11 @@ window.renameFile = async (encodedName, target) => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ oldPath: name, newPath: newName }),
     });
-    if (!res.ok) {
-      const err = await res.json();
-      throw new Error(err.error || 'Rename failed');
-    }
-    setStatus('File renamed successfully', 'success');
+    if (!res.ok) throw new Error((await res.json()).error || 'Rename failed');
+    setStatus('Renamed successfully', 'success');
     selectedFiles.delete(name);
     await loadFiles(currentTarget);
-  } catch (err) {
-    setStatus('Rename error: ' + err.message, 'error');
-  }
+  } catch (err) { setStatus('Error: ' + err.message, 'error'); }
 };
 
 window.openFolder = async (encodedName, target) => {
@@ -650,22 +606,14 @@ function navigateToPath(path) {
 window.deleteFile = async (encodedName, target) => {
   const name = decodeURIComponent(encodedName);
   if (!confirm(`Delete ${name}?`)) return;
-
   try {
     const endpoint = target === 'hf' ? `/api/hf/delete/${encodeURIComponent(name)}` : `/api/delete/${encodeURIComponent(name)}`;
-    const res = await fetch(endpoint, {
-      method: 'DELETE',
-    });
-    if (!res.ok) {
-      const err = await res.json();
-      throw new Error(err.error || 'Delete failed');
-    }
-    setStatus('Deleted successfully', 'success');
+    const res = await fetch(endpoint, { method: 'DELETE' });
+    if (!res.ok) throw new Error((await res.json()).error || 'Delete failed');
+    setStatus('Deleted', 'success');
     selectedFiles.delete(name);
     await loadFiles(currentTarget);
-  } catch (err) {
-    setStatus('Delete error: ' + err.message, 'error');
-  }
+  } catch (err) { setStatus('Error: ' + err.message, 'error'); }
 };
 
 function formatBytes(bytes) {
@@ -683,4 +631,4 @@ function escapeHtml(text) {
 }
 
 loadFiles();
-setInterval(() => loadFiles(currentTarget), 5000);
+setInterval(() => loadFiles(currentTarget), 10000); // 10 seconds refresh
