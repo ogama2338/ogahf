@@ -346,7 +346,7 @@ app.get('/api/hf/public-url/*', (req, res) => {
 
   const baseUrl = `https://huggingface.co/buckets/${HF_BUCKET}/resolve/main/${encodeURIComponent(filename)}`;
   const tokenUrl = HF_TOKEN ? `${baseUrl}?token=${encodeURIComponent(HF_TOKEN)}` : baseUrl;
-  const proxyUrl = `${req.protocol}://${req.get('host')}/api/hf/download/${encodeURIComponent(filename)}`;
+  const proxyUrl = `/api/hf/download/${encodeURIComponent(filename)}`;
 
   res.json({ url: tokenUrl, proxyUrl });
 });
