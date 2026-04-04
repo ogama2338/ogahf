@@ -37,19 +37,26 @@ if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir);
 }
 
-// Configure multer for file uploads (memory storage)
-const storage = multer.memoryStorage();
-const upload = multer({ storage });
+// Create a temp directory for multer uploads
+const tempUploadsDir = path.join(__dirname, 'temp_uploads');
+if (!fs.existsSync(tempUploadsDir)) {
+  fs.mkdirSync(tempUploadsDir);
+}
+
+// Configure multer for file uploads (disk storage)
+const upload = multer({ dest: tempUploadsDir });
 
 // Routes
 
-// Upload file
+// Upload file (No longer directly used by client, but kept for potential direct API use)
 app.post('/api/upload', upload.single('file'), (req, res) => {
   if (!req.file) {
     return res.status(400).json({ error: 'No file uploaded' });
   }
+  // Note: file is now on disk, not in memory. Clean up if not moved.
+  fs.unlink(req.file.path, () => {}); 
   res.json({
-    message: 'File uploaded successfully',
+    message: 'File uploaded temporarily, but this endpoint does not persist it.',
     file: {
       originalName: req.file.originalname,
       filename: req.file.filename,
@@ -140,10 +147,8 @@ app.delete('/api/delete/*', async (req, res) => {
   try {
     const stats = await fs.promises.stat(filepath);
     if (stats.isDirectory()) {
-      // Delete directory recursively
       await fs.promises.rm(filepath, { recursive: true, force: true });
     } else {
-      // Delete file
       await fs.promises.unlink(filepath);
     }
     res.json({ message: 'Deleted successfully' });
@@ -200,22 +205,24 @@ app.post('/api/upload-multiple', upload.array('files'), async (req, res) => {
   }
 
   const paths = Array.isArray(req.body.paths) ? req.body.paths : (req.body.paths ? [req.body.paths] : []);
+  const tempFiles = req.files;
 
   try {
     const results = [];
 
-    for (let i = 0; i < req.files.length; i++) {
-      const file = req.files[i];
+    for (let i = 0; i < tempFiles.length; i++) {
+      const file = tempFiles[i];
       const targetPath = paths[i] || file.originalname;
       const normalized = path.normalize(targetPath).replace(/\\/g, '/');
 
       if (normalized.includes('..')) {
+        // Don't process, but ensure temp file is deleted
         return res.status(400).json({ error: 'Invalid path' });
       }
 
       const fullPath = path.join(uploadsDir, normalized);
       await fs.promises.mkdir(path.dirname(fullPath), { recursive: true });
-      await fs.promises.writeFile(fullPath, file.buffer);
+      await fs.promises.rename(file.path, fullPath); // Move from temp to final location
 
       results.push({ path: normalized, size: file.size });
     }
@@ -224,6 +231,9 @@ app.post('/api/upload-multiple', upload.array('files'), async (req, res) => {
   } catch (error) {
     console.error('Upload multiple error:', error);
     res.status(500).json({ error: 'Could not save files', details: error.message });
+  } finally {
+      // If any files were not moved due to an error, clean them up.
+      tempFiles.forEach(f => fs.promises.access(f.path).then(() => fs.promises.unlink(f.path)).catch(() => {}));
   }
 });
 
@@ -300,20 +310,22 @@ app.post('/api/hf/upload', upload.single('file'), async (req, res) => {
   if (!req.file) {
     return res.status(400).json({ error: 'No file uploaded' });
   }
-
+  const tempPath = req.file.path;
   try {
-    const blob = new Blob([req.file.buffer]);
     await uploadFiles({
       repo: `buckets/${HF_BUCKET}`,
-      files: [{ path: req.file.originalname, content: blob }],
+      files: [{ path: req.file.originalname, content: fs.createReadStream(tempPath) }],
       accessToken: HF_TOKEN,
       useXet: true,
     });
-
     res.json({ message: 'Uploaded to HF bucket successfully', key: req.file.originalname });
   } catch (error) {
     console.error('HF upload error', error);
     res.status(500).json({ error: 'Could not upload to HF bucket' });
+  } finally {
+    fs.unlink(tempPath, (err) => {
+        if (err) console.error("Error deleting temp file:", tempPath, err);
+    });
   }
 });
 
@@ -408,25 +420,32 @@ app.post('/api/hf/rename', async (req, res) => {
 });
 
 app.post('/api/hf/upload-multiple', upload.array('files'), async (req, res) => {
-  if (!hfCheckConfig(res)) return;
-  if (!req.files || req.files.length === 0) {
-    return res.status(400).json({ error: 'No files uploaded' });
-  }
+    if (!hfCheckConfig(res)) return;
+    if (!req.files || req.files.length === 0) {
+        return res.status(400).json({ error: 'No files uploaded' });
+    }
 
-  const paths = Array.isArray(req.body.paths) ? req.body.paths : (req.body.paths ? [req.body.paths] : []);
+    const paths = Array.isArray(req.body.paths) ? req.body.paths : (req.body.paths ? [req.body.paths] : []);
+    const tempFiles = req.files;
 
-  try {
-    const filesToUpload = req.files.map((f, i) => {
-      const targetPath = paths[i] || f.originalname;
-      return { path: targetPath, content: new Blob([f.buffer]) };
-    });
+    try {
+        const filesToUpload = tempFiles.map((f, i) => {
+            const targetPath = paths[i] || f.originalname;
+            return { path: targetPath, content: fs.createReadStream(f.path) };
+        });
 
-    await uploadFiles({ repo: `buckets/${HF_BUCKET}`, files: filesToUpload, accessToken: HF_TOKEN, useXet: true });
-    res.json({ message: 'HF bucket files uploaded successfully' });
-  } catch (error) {
-    console.error('HF upload-multiple error', error);
-    res.status(500).json({ error: 'Could not upload multiple files to HF bucket' });
-  }
+        await uploadFiles({ repo: `buckets/${HF_BUCKET}`, files: filesToUpload, accessToken: HF_TOKEN, useXet: true });
+        res.json({ message: 'HF bucket files uploaded successfully' });
+    } catch (error) {
+        console.error('HF upload-multiple error', error);
+        res.status(500).json({ error: 'Could not upload multiple files to HF bucket' });
+    } finally {
+        tempFiles.forEach(f => {
+            fs.unlink(f.path, (err) => {
+                if (err) console.error("Error deleting temp file:", f.path, err);
+            });
+        });
+    }
 });
 
 app.post('/api/hf/create-folder', async (req, res) => {
@@ -437,13 +456,14 @@ app.post('/api/hf/create-folder', async (req, res) => {
   }
   // For HF buckets, folders are implicit, so just create a dummy file to ensure the path exists, then delete it
   try {
+    const placeholderPath = `${folderPath}/.keep`;
     await uploadFiles({
       repo: `buckets/${HF_BUCKET}`,
-      files: [{ path: `${folderPath}/.keep`, content: new Blob(['']) }],
+      files: [{ path: placeholderPath, content: new Blob(['']) }],
       accessToken: HF_TOKEN,
       useXet: true,
     });
-    await deleteFile({ repo: `buckets/${HF_BUCKET}`, path: `${folderPath}/.keep`, accessToken: HF_TOKEN });
+    // No need to delete, .keep file is a common convention for empty folders
     res.json({ message: 'HF folder created successfully' });
   } catch (error) {
     console.error('HF create-folder error', error);
