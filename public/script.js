@@ -5,8 +5,9 @@ const uploadBtn = document.getElementById('uploadBtn');
 const uploadFolderBtn = document.getElementById('uploadFolderBtn');
 const uploadStatus = document.getElementById('uploadStatus');
 const filesList = document.getElementById('filesList');
-const bucketInput = document.getElementById('bucketInput'); // ADDED: Bucket input
-const changeBucketBtn = document.getElementById('changeBucketBtn'); // ADDED: Bucket button
+const bucketInput = document.getElementById('bucketInput');
+const changeBucketBtn = document.getElementById('changeBucketBtn');
+const savedBucketsList = document.getElementById('savedBucketsList'); // ADDED: Datalist
 const loadHfBtn = document.getElementById('loadHfBtn');
 const showLocalBtn = document.getElementById('showLocalBtn');
 const showHfBtn = document.getElementById('showHfBtn');
@@ -29,21 +30,42 @@ let selectedFiles = new Set();
 let cachedFiles = [];
 let bucketFilesMap = new Map(); 
 
-// Load Default Bucket on Startup
-if (bucketInput && window.APP_CONFIG && window.APP_CONFIG.defaultBucket) {
-  bucketInput.value = window.APP_CONFIG.defaultBucket;
+// SMART BUCKET DROPDOWN LOGIC
+function updateBucketDropdown() {
+  if (!savedBucketsList) return;
+  let saved = JSON.parse(localStorage.getItem('hf_buckets') || '[]');
+  
+  if (window.APP_CONFIG && window.APP_CONFIG.defaultBucket) saved.push(window.APP_CONFIG.defaultBucket);
+  if (window.APP_CONFIG && window.APP_CONFIG.envBuckets) {
+     window.APP_CONFIG.envBuckets.split(',').forEach(b => saved.push(b.trim()));
+  }
+
+  saved = [...new Set(saved)].filter(Boolean); // Remove duplicates
+  savedBucketsList.innerHTML = saved.map(b => `<option value="${b}"></option>`).join('');
+  localStorage.setItem('hf_buckets', JSON.stringify(saved));
 }
 
-// Function to attach the current bucket name to our server requests
+if (bucketInput && window.APP_CONFIG && window.APP_CONFIG.defaultBucket) {
+  bucketInput.value = window.APP_CONFIG.defaultBucket;
+  updateBucketDropdown();
+}
+
 function getBucketQuery() {
   return bucketInput && bucketInput.value ? `?bucket=${encodeURIComponent(bucketInput.value)}` : '';
 }
 
 if (changeBucketBtn) {
   changeBucketBtn.addEventListener('click', () => {
+    const newBucket = bucketInput.value.trim();
+    if (newBucket) {
+       let saved = JSON.parse(localStorage.getItem('hf_buckets') || '[]');
+       saved.push(newBucket);
+       localStorage.setItem('hf_buckets', JSON.stringify(saved));
+       updateBucketDropdown();
+    }
     currentPath = '';
     loadFiles(currentTarget);
-    setStatus(`Switched to Bucket: ${bucketInput.value}`, 'success');
+    setStatus(`Switched to Bucket: ${newBucket}`, 'success');
   });
 }
 
@@ -430,7 +452,8 @@ window.downloadFile = async (encodedName, target) => {
         const a = document.createElement('a');
         a.href = downloadUrl; a.download = name.split('/').pop();
         document.body.appendChild(a); a.click(); document.body.removeChild(a);
-      } else { window.open(downloadUrl, '_blank'); }
+        setStatus('Downloading via proxy', 'success');
+      } else { window.open(downloadUrl, '_blank'); setStatus('Opening direct HF download', 'success'); }
       return;
     } catch (err) { return setStatus('Download failed: ' + err.message, 'error'); }
   }

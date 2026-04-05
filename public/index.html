@@ -62,10 +62,11 @@
             <small>View and manage path-based files</small>
           </div>
           
-          <!-- ADDED: The Bucket Switcher UI -->
+          <!-- SMART DROPDOWN BUCKET LIST -->
           <div style="display: flex; gap: 8px; align-items: center; background: #f0f4f8; padding: 10px; border-radius: 6px;">
             <strong>Target Bucket:</strong>
-            <input type="text" id="bucketInput" placeholder="username/bucket-name" style="flex: 1; padding: 6px; border: 1px solid #ccc; border-radius: 4px;">
+            <input type="text" id="bucketInput" list="savedBucketsList" placeholder="username/bucket-name" style="flex: 1; padding: 6px; border: 1px solid #ccc; border-radius: 4px;">
+            <datalist id="savedBucketsList"></datalist>
             <button id="changeBucketBtn" class="btn btn-primary" style="padding: 6px 12px;">Switch Bucket</button>
           </div>
         </div>

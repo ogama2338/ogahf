@@ -10,6 +10,7 @@ const { listFiles, uploadFiles, deleteFile, downloadFile } = require('@huggingfa
 const app = express();
 const PORT = process.env.PORT || 3000;
 const DEFAULT_HF_BUCKET = process.env.HF_BUCKET || ''; 
+const AVAILABLE_BUCKETS = process.env.AVAILABLE_BUCKETS || ''; // Allows setting a list of buckets in Render
 const HF_TOKEN = process.env.HF_TOKEN || '';
 
 app.use(cors());
@@ -48,7 +49,6 @@ function addParentDirectories(items) {
     return Array.from(pathMap.values());
 }
 
-// FIX: Dynamic Bucket Checker
 function getHfBucket(req) {
   return req.query.bucket || DEFAULT_HF_BUCKET;
 }
@@ -62,7 +62,6 @@ function hfCheckConfig(req, res) {
   return targetBucket;
 }
 
-// FIX: Recursive Delete now uses the dynamic bucket
 async function hfDeletePaths(targetPaths, targetBucket) {
   const targets = Array.isArray(targetPaths) ? targetPaths : [targetPaths];
   const toDelete = new Set();
@@ -81,7 +80,7 @@ app.get('/', (req, res) => {
   const indexPath = path.join(__dirname, 'public', 'index.html');
   fs.readFile(indexPath, 'utf8', (err, data) => {
     if (err) return res.status(500).send('Error loading page');
-    const configScript = `<script>window.APP_CONFIG = { hasHfToken: ${!!HF_TOKEN}, defaultBucket: "${DEFAULT_HF_BUCKET}" };</script>`;
+    const configScript = `<script>window.APP_CONFIG = { hasHfToken: ${!!HF_TOKEN}, defaultBucket: "${DEFAULT_HF_BUCKET}", envBuckets: "${AVAILABLE_BUCKETS}" };</script>`;
     const finalHtml = data.replace('<link rel="stylesheet" href="style.css">', `${configScript}\n<link rel="stylesheet" href="style.css">`);
     res.send(finalHtml);
   });
