@@ -5,9 +5,11 @@ const uploadBtn = document.getElementById('uploadBtn');
 const uploadFolderBtn = document.getElementById('uploadFolderBtn');
 const uploadStatus = document.getElementById('uploadStatus');
 const filesList = document.getElementById('filesList');
-const bucketInput = document.getElementById('bucketInput');
-const changeBucketBtn = document.getElementById('changeBucketBtn');
-const savedBucketsList = document.getElementById('savedBucketsList');
+
+// UI Elements for the new Dropdown
+const bucketSelect = document.getElementById('bucketSelect');
+const addBucketBtn = document.getElementById('addBucketBtn');
+
 const loadHfBtn = document.getElementById('loadHfBtn');
 const showLocalBtn = document.getElementById('showLocalBtn');
 const showHfBtn = document.getElementById('showHfBtn');
@@ -30,9 +32,9 @@ let selectedFiles = new Set();
 let cachedFiles = [];
 let bucketFilesMap = new Map(); 
 
-// SMART BUCKET DROPDOWN LOGIC
+// --- CLASSIC DROPDOWN LOGIC ---
 function updateBucketDropdown() {
-  if (!savedBucketsList) return;
+  if (!bucketSelect) return;
   let saved = JSON.parse(localStorage.getItem('hf_buckets') || '[]');
   
   if (window.APP_CONFIG && window.APP_CONFIG.defaultBucket) saved.push(window.APP_CONFIG.defaultBucket);
@@ -40,34 +42,57 @@ function updateBucketDropdown() {
      window.APP_CONFIG.envBuckets.split(',').forEach(b => saved.push(b.trim()));
   }
 
-  saved = [...new Set(saved)].filter(Boolean); // Remove duplicates
-  savedBucketsList.innerHTML = saved.map(b => `<option value="${b}"></option>`).join('');
+  // Remove duplicates and blanks
+  saved = [...new Set(saved)].filter(Boolean); 
+  
+  const currentVal = bucketSelect.value;
+  bucketSelect.innerHTML = saved.map(b => `<option value="${b}">${b}</option>`).join('');
+  
+  // Re-select the option they had, or default to the first one
+  if (saved.includes(currentVal)) {
+    bucketSelect.value = currentVal;
+  } else if (saved.length > 0) {
+    bucketSelect.value = saved[0];
+  }
+  
   localStorage.setItem('hf_buckets', JSON.stringify(saved));
 }
 
-if (bucketInput && window.APP_CONFIG && window.APP_CONFIG.defaultBucket) {
-  bucketInput.value = window.APP_CONFIG.defaultBucket;
-}
-updateBucketDropdown(); // <-- FIX: Always update the dropdown!
+// Initial build of the dropdown
+updateBucketDropdown(); 
 
 function getBucketQuery() {
-  return bucketInput && bucketInput.value ? `?bucket=${encodeURIComponent(bucketInput.value)}` : '';
+  return bucketSelect && bucketSelect.value ? `?bucket=${encodeURIComponent(bucketSelect.value)}` : '';
 }
 
-if (changeBucketBtn) {
-  changeBucketBtn.addEventListener('click', () => {
-    const newBucket = bucketInput.value.trim();
-    if (newBucket) {
-       let saved = JSON.parse(localStorage.getItem('hf_buckets') || '[]');
-       saved.push(newBucket);
-       localStorage.setItem('hf_buckets', JSON.stringify(saved));
-       updateBucketDropdown();
-    }
+// When user selects a different bucket from the dropdown
+if (bucketSelect) {
+  bucketSelect.addEventListener('change', () => {
     currentPath = '';
     loadFiles(currentTarget);
-    setStatus(`Switched to Bucket: ${newBucket}`, 'success');
+    setStatus(`Switched to Bucket: ${bucketSelect.value}`, 'success');
   });
 }
+
+// When user clicks the "➕ Add" button
+if (addBucketBtn) {
+  addBucketBtn.addEventListener('click', () => {
+    const newBucket = prompt("Enter new bucket name (e.g. username/bucket-name):");
+    if (newBucket && newBucket.trim()) {
+       let saved = JSON.parse(localStorage.getItem('hf_buckets') || '[]');
+       saved.push(newBucket.trim());
+       localStorage.setItem('hf_buckets', JSON.stringify(saved));
+       
+       updateBucketDropdown();
+       bucketSelect.value = newBucket.trim(); // Auto-select the newly added bucket
+       
+       currentPath = '';
+       loadFiles(currentTarget);
+       setStatus(`Added and Switched to Bucket: ${newBucket.trim()}`, 'success');
+    }
+  });
+}
+// ------------------------------
 
 function setStatus(message, type = 'success', target = uploadStatus) {
   target.textContent = message;
