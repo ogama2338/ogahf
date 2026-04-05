@@ -9,7 +9,7 @@ const { listFiles, uploadFiles, deleteFile, downloadFile } = require('@huggingfa
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const HF_BUCKET = process.env.HF_BUCKET || ''; 
+const DEFAULT_HF_BUCKET = process.env.HF_BUCKET || ''; 
 const HF_TOKEN = process.env.HF_TOKEN || '';
 
 app.use(cors());
@@ -23,67 +23,57 @@ const tempUploadsDir = path.join(__dirname, 'temp_uploads');
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 });
 
-const upload = multer({ 
-  dest: tempUploadsDir,
-  limits: { fileSize: 2000 * 1024 * 1024 } 
-});
+const upload = multer({ dest: tempUploadsDir, limits: { fileSize: 2000 * 1024 * 1024 } });
 
 const cleanup = (files) => {
   const filesToDelete = Array.isArray(files) ? files : [files];
   filesToDelete.forEach(f => {
-    if (f && f.path) {
-      fs.promises.unlink(f.path).catch(e => console.error('Failed to delete temp file:', f.path, e));
-    }
+    if (f && f.path) fs.promises.unlink(f.path).catch(e => console.error('Failed to delete temp file:', f.path));
   });
 };
 
 function addParentDirectories(items) {
     const pathMap = new Map();
     items.forEach(item => pathMap.set(item.path, item));
-
     items.forEach(item => {
         const parts = item.path.split('/');
         let currentPath = '';
         for (let i = 0; i < parts.length - 1; i++) {
             currentPath = currentPath ? `${currentPath}/${parts[i]}` : parts[i];
             if (!pathMap.has(currentPath)) {
-                pathMap.set(currentPath, {
-                    path: currentPath,
-                    type: 'directory',
-                    size: 0,
-                    updatedAt: item.updatedAt || new Date().toISOString()
-                });
+                pathMap.set(currentPath, { path: currentPath, type: 'directory', size: 0, updatedAt: item.updatedAt || new Date().toISOString() });
             }
         }
     });
     return Array.from(pathMap.values());
 }
 
-function hfCheckConfig(res) {
-  if (!HF_BUCKET || !HF_TOKEN) {
-    res.status(400).json({ error: 'Server is not configured. Missing HF_BUCKET or HF_TOKEN.' });
-    return false;
-  }
-  return true;
+// FIX: Dynamic Bucket Checker
+function getHfBucket(req) {
+  return req.query.bucket || DEFAULT_HF_BUCKET;
 }
 
-// FIX: Helper to recursively delete folders and files!
-async function hfDeletePaths(targetPaths) {
+function hfCheckConfig(req, res) {
+  const targetBucket = getHfBucket(req);
+  if (!targetBucket || !HF_TOKEN) {
+    res.status(400).json({ error: 'Missing Target Bucket Name or HF_TOKEN.' });
+    return null;
+  }
+  return targetBucket;
+}
+
+// FIX: Recursive Delete now uses the dynamic bucket
+async function hfDeletePaths(targetPaths, targetBucket) {
   const targets = Array.isArray(targetPaths) ? targetPaths : [targetPaths];
   const toDelete = new Set();
   
-  // 1. Search for all files that match the name OR are inside the folder
-  for await (const item of listFiles({ repo: `buckets/${HF_BUCKET}`, repoType: 'bucket', recursive: true, accessToken: HF_TOKEN })) {
+  for await (const item of listFiles({ repo: `buckets/${targetBucket}`, repoType: 'bucket', recursive: true, accessToken: HF_TOKEN })) {
     for (const target of targets) {
-      if (item.path === target || item.path.startsWith(target + '/')) {
-        toDelete.add(item.path);
-      }
+      if (item.path === target || item.path.startsWith(target + '/')) toDelete.add(item.path);
     }
   }
-
-  // 2. Delete them one by one
   for (const p of toDelete) {
-    await deleteFile({ repo: `buckets/${HF_BUCKET}`, repoType: 'bucket', path: p, accessToken: HF_TOKEN });
+    await deleteFile({ repo: `buckets/${targetBucket}`, repoType: 'bucket', path: p, accessToken: HF_TOKEN });
   }
 }
 
@@ -91,86 +81,67 @@ app.get('/', (req, res) => {
   const indexPath = path.join(__dirname, 'public', 'index.html');
   fs.readFile(indexPath, 'utf8', (err, data) => {
     if (err) return res.status(500).send('Error loading page');
-    const configScript = `<script>window.APP_CONFIG = { hasHfToken: ${!!HF_TOKEN} };</script>`;
+    const configScript = `<script>window.APP_CONFIG = { hasHfToken: ${!!HF_TOKEN}, defaultBucket: "${DEFAULT_HF_BUCKET}" };</script>`;
     const finalHtml = data.replace('<link rel="stylesheet" href="style.css">', `${configScript}\n<link rel="stylesheet" href="style.css">`);
     res.send(finalHtml);
   });
 });
 
 app.get('/api/hf/files', async (req, res) => {
-  if (!hfCheckConfig(res)) return;
+  const targetBucket = hfCheckConfig(req, res); if (!targetBucket) return;
   try {
     const output = [];
-    for await (const item of listFiles({ repo: `buckets/${HF_BUCKET}`, repoType: 'bucket', recursive: true, accessToken: HF_TOKEN })) {
+    for await (const item of listFiles({ repo: `buckets/${targetBucket}`, repoType: 'bucket', recursive: true, accessToken: HF_TOKEN })) {
       output.push({ path: item.path, type: item.type, size: item.size, updatedAt: item.lastModified || item.updatedAt || null });
     }
     res.json(addParentDirectories(output));
-  } catch (error) {
-    res.status(500).json({ error: 'Could not list HF bucket files', details: error.message });
-  }
+  } catch (error) { res.status(500).json({ error: 'Could not list HF files', details: error.message }); }
 });
 
 app.post('/api/hf/upload-multiple', upload.array('files'), async (req, res) => {
-  if (!hfCheckConfig(res)) return;
+  const targetBucket = hfCheckConfig(req, res); if (!targetBucket) return;
   if (!req.files || req.files.length === 0) return res.status(400).json({ error: 'No files uploaded' });
   const tempFiles = req.files;
   try {
     const paths = req.body.paths ? (Array.isArray(req.body.paths) ? req.body.paths : [req.body.paths]) : [];
-    const filesToUpload = tempFiles.map((f, i) => ({
-        path: paths[i] || f.originalname,
-        content: pathToFileURL(f.path) 
-    }));
-    await uploadFiles({ repo: `buckets/${HF_BUCKET}`, repoType: 'bucket', files: filesToUpload, accessToken: HF_TOKEN });
-    res.json({ message: 'HF bucket files uploaded successfully' });
-  } catch (error) {
-    res.status(500).json({ error: error.message || 'Could not upload files' });
-  } finally {
-    cleanup(tempFiles);
-  }
+    const filesToUpload = tempFiles.map((f, i) => ({ path: paths[i] || f.originalname, content: pathToFileURL(f.path) }));
+    await uploadFiles({ repo: `buckets/${targetBucket}`, repoType: 'bucket', files: filesToUpload, accessToken: HF_TOKEN });
+    res.json({ message: 'Uploaded successfully' });
+  } catch (error) { res.status(500).json({ error: error.message }); } finally { cleanup(tempFiles); }
 });
 
 app.post('/api/hf/create-folder', async (req, res) => {
-  if (!hfCheckConfig(res)) return;
-  const { folderPath } = req.body;
+  const targetBucket = hfCheckConfig(req, res); if (!targetBucket) return;
   try {
-    await uploadFiles({ repo: `buckets/${HF_BUCKET}`, repoType: 'bucket', files: [{ path: `${folderPath}/.keep`, content: new Blob(['']) }], accessToken: HF_TOKEN });
-    res.json({ message: 'HF folder created' });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
+    await uploadFiles({ repo: `buckets/${targetBucket}`, repoType: 'bucket', files: [{ path: `${req.body.folderPath}/.keep`, content: new Blob(['']) }], accessToken: HF_TOKEN });
+    res.json({ message: 'Folder created' });
+  } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
-// FIX: Delete Single Item (Folder or File)
 app.delete('/api/hf/delete/*', async (req, res) => {
-  if (!hfCheckConfig(res)) return;
+  const targetBucket = hfCheckConfig(req, res); if (!targetBucket) return;
   try {
-    await hfDeletePaths(req.params[0]);
+    await hfDeletePaths(req.params[0], targetBucket);
     res.json({ message: 'Deleted successfully' });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
+  } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
-// FIX: Delete Multiple Items (Folders or Files)
 app.post('/api/hf/delete-multiple', async (req, res) => {
-  if (!hfCheckConfig(res)) return;
-  const { filenames } = req.body;
+  const targetBucket = hfCheckConfig(req, res); if (!targetBucket) return;
   try {
-    await hfDeletePaths(filenames);
+    await hfDeletePaths(req.body.filenames, targetBucket);
     res.json({ message: 'Deleted successfully' });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
+  } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
 app.get('/api/hf/download/*', async (req, res) => {
-  if (!hfCheckConfig(res)) return;
+  const targetBucket = hfCheckConfig(req, res); if (!targetBucket) return;
   const filePath = req.params[0];
   try {
     let targetUrl = '';
     const originalFetch = globalThis.fetch;
     globalThis.fetch = async (url) => { targetUrl = url.toString(); throw new Error("INTERCEPTED"); };
-    try { await downloadFile({ repo: `buckets/${HF_BUCKET}`, repoType: 'bucket', path: filePath, accessToken: HF_TOKEN }); } 
+    try { await downloadFile({ repo: `buckets/${targetBucket}`, repoType: 'bucket', path: filePath, accessToken: HF_TOKEN }); } 
     catch (e) { if (e.message !== "INTERCEPTED") throw e; } 
     finally { globalThis.fetch = originalFetch; }
 
@@ -190,37 +161,36 @@ app.get('/api/hf/download/*', async (req, res) => {
     
     res.status(response.status);
     Readable.fromWeb(response.body).pipe(res);
-  } catch (error) {
-    if (!res.headersSent) res.status(500).json({ error: error.message });
-  }
+  } catch (error) { if (!res.headersSent) res.status(500).json({ error: error.message }); }
 });
 
 app.get('/api/hf/public-url/*', async (req, res) => {
-  const proxyUrl = `${req.protocol}://${req.get('host')}/api/hf/download/${encodeURIComponent(req.params[0])}`;
+  const targetBucket = getHfBucket(req);
+  const proxyUrl = `${req.protocol}://${req.get('host')}/api/hf/download/${encodeURIComponent(req.params[0])}?bucket=${encodeURIComponent(targetBucket)}`;
   res.json({ proxyUrl, url: proxyUrl }); 
 });
 
 app.post('/api/hf/rename', async (req, res) => {
-  if (!hfCheckConfig(res)) return;
+  const targetBucket = hfCheckConfig(req, res); if (!targetBucket) return;
   const { oldPath, newPath } = req.body;
   try {
-    const blob = await downloadFile({ repo: `buckets/${HF_BUCKET}`, repoType: 'bucket', path: oldPath, accessToken: HF_TOKEN });
-    await uploadFiles({ repo: `buckets/${HF_BUCKET}`, repoType: 'bucket', files: [{ path: newPath, content: blob }], accessToken: HF_TOKEN });
-    await deleteFile({ repo: `buckets/${HF_BUCKET}`, repoType: 'bucket', path: oldPath, accessToken: HF_TOKEN });
+    const blob = await downloadFile({ repo: `buckets/${targetBucket}`, repoType: 'bucket', path: oldPath, accessToken: HF_TOKEN });
+    await uploadFiles({ repo: `buckets/${targetBucket}`, repoType: 'bucket', files: [{ path: newPath, content: blob }], accessToken: HF_TOKEN });
+    await deleteFile({ repo: `buckets/${targetBucket}`, repoType: 'bucket', path: oldPath, accessToken: HF_TOKEN });
     res.json({ message: 'Renamed' });
   } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
 app.post('/api/hf/move', async (req, res) => {
-  if (!hfCheckConfig(res)) return;
+  const targetBucket = hfCheckConfig(req, res); if (!targetBucket) return;
   const { files, destination } = req.body;
   try {
     for (const file of files) {
       const newPath = destination ? `${destination}/${path.basename(file)}` : path.basename(file);
-      const blob = await downloadFile({ repo: `buckets/${HF_BUCKET}`, repoType: 'bucket', path: file, accessToken: HF_TOKEN });
+      const blob = await downloadFile({ repo: `buckets/${targetBucket}`, repoType: 'bucket', path: file, accessToken: HF_TOKEN });
       if (blob) {
-        await uploadFiles({ repo: `buckets/${HF_BUCKET}`, repoType: 'bucket', files: [{ path: newPath, content: blob }], accessToken: HF_TOKEN });
-        await deleteFile({ repo: `buckets/${HF_BUCKET}`, repoType: 'bucket', path: file, accessToken: HF_TOKEN });
+        await uploadFiles({ repo: `buckets/${targetBucket}`, repoType: 'bucket', files: [{ path: newPath, content: blob }], accessToken: HF_TOKEN });
+        await deleteFile({ repo: `buckets/${targetBucket}`, repoType: 'bucket', path: file, accessToken: HF_TOKEN });
       }
     }
     res.json({ message: 'Moved' });

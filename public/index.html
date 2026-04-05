@@ -56,10 +56,20 @@
       </section>
 
       <section class="card">
-        <div class="card-header">
-          <h2>File Manager</h2>
-          <small>View and manage path-based files</small>
+        <div class="card-header" style="display: flex; flex-direction: column; gap: 10px;">
+          <div>
+            <h2>File Manager</h2>
+            <small>View and manage path-based files</small>
+          </div>
+          
+          <!-- ADDED: The Bucket Switcher UI -->
+          <div style="display: flex; gap: 8px; align-items: center; background: #f0f4f8; padding: 10px; border-radius: 6px;">
+            <strong>Target Bucket:</strong>
+            <input type="text" id="bucketInput" placeholder="username/bucket-name" style="flex: 1; padding: 6px; border: 1px solid #ccc; border-radius: 4px;">
+            <button id="changeBucketBtn" class="btn btn-primary" style="padding: 6px 12px;">Switch Bucket</button>
+          </div>
         </div>
+        
         <div class="card-body">
           <div class="management-actions">
             <div class="action-group">
@@ -67,16 +77,16 @@
                 <select id="sortBy">
                   <option value="name">Name</option>
                   <option value="size">Size</option>
-                  <option value="date" selected>Date</option> <!-- DEFAULT -->
+                  <option value="date" selected>Date</option>
                 </select>
               </label>
               <label>Order: 
                 <select id="sortOrder">
                   <option value="asc">Asc</option>
-                  <option value="desc" selected>Desc</option> <!-- DEFAULT -->
+                  <option value="desc" selected>Desc</option>
                 </select>
               </label>
-              <label><input id="pinFolders" type="checkbox" checked> Pin Folders</label> <!-- PIN FEATURE -->
+              <label><input id="pinFolders" type="checkbox" checked> Pin Folders</label>
               <label><input id="selectAll" type="checkbox"> Select all</label>
             </div>
             <div class="action-group">
