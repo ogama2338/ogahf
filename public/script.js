@@ -7,7 +7,7 @@ const uploadStatus = document.getElementById('uploadStatus');
 const filesList = document.getElementById('filesList');
 const bucketInput = document.getElementById('bucketInput');
 const changeBucketBtn = document.getElementById('changeBucketBtn');
-const savedBucketsList = document.getElementById('savedBucketsList'); // ADDED: Datalist
+const savedBucketsList = document.getElementById('savedBucketsList');
 const loadHfBtn = document.getElementById('loadHfBtn');
 const showLocalBtn = document.getElementById('showLocalBtn');
 const showHfBtn = document.getElementById('showHfBtn');
@@ -47,8 +47,8 @@ function updateBucketDropdown() {
 
 if (bucketInput && window.APP_CONFIG && window.APP_CONFIG.defaultBucket) {
   bucketInput.value = window.APP_CONFIG.defaultBucket;
-  updateBucketDropdown();
 }
+updateBucketDropdown(); // <-- FIX: Always update the dropdown!
 
 function getBucketQuery() {
   return bucketInput && bucketInput.value ? `?bucket=${encodeURIComponent(bucketInput.value)}` : '';
