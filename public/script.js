@@ -5,11 +5,8 @@ const uploadBtn = document.getElementById('uploadBtn');
 const uploadFolderBtn = document.getElementById('uploadFolderBtn');
 const uploadStatus = document.getElementById('uploadStatus');
 const filesList = document.getElementById('filesList');
-
-// UI Elements for the new Dropdown
 const bucketSelect = document.getElementById('bucketSelect');
 const addBucketBtn = document.getElementById('addBucketBtn');
-
 const loadHfBtn = document.getElementById('loadHfBtn');
 const showLocalBtn = document.getElementById('showLocalBtn');
 const showHfBtn = document.getElementById('showHfBtn');
@@ -32,67 +29,77 @@ let selectedFiles = new Set();
 let cachedFiles = [];
 let bucketFilesMap = new Map(); 
 
-// --- CLASSIC DROPDOWN LOGIC ---
+// FIX: Robust Bucket Dropdown Logic
 function updateBucketDropdown() {
   if (!bucketSelect) return;
-  let saved = JSON.parse(localStorage.getItem('hf_buckets') || '[]');
   
-  if (window.APP_CONFIG && window.APP_CONFIG.defaultBucket) saved.push(window.APP_CONFIG.defaultBucket);
-  if (window.APP_CONFIG && window.APP_CONFIG.envBuckets) {
-     window.APP_CONFIG.envBuckets.split(',').forEach(b => saved.push(b.trim()));
+  let buckets = [];
+
+  // 1. Get from Server Configuration (Render Variables)
+  if (window.APP_CONFIG) {
+    if (window.APP_CONFIG.defaultBucket) buckets.push(window.APP_CONFIG.defaultBucket.trim());
+    if (window.APP_CONFIG.envBuckets) {
+      window.APP_CONFIG.envBuckets.split(',').forEach(b => buckets.push(b.trim()));
+    }
   }
 
-  // Remove duplicates and blanks
-  saved = [...new Set(saved)].filter(Boolean); 
-  
-  const currentVal = bucketSelect.value;
-  bucketSelect.innerHTML = saved.map(b => `<option value="${b}">${b}</option>`).join('');
-  
-  // Re-select the option they had, or default to the first one
-  if (saved.includes(currentVal)) {
-    bucketSelect.value = currentVal;
-  } else if (saved.length > 0) {
-    bucketSelect.value = saved[0];
+  // 2. Get from Local Browser History
+  try {
+    const history = JSON.parse(localStorage.getItem('hf_buckets') || '[]');
+    if (Array.isArray(history)) {
+        history.forEach(b => buckets.push(b.trim()));
+    }
+  } catch(e) {}
+
+  // Deduplicate and clean
+  buckets = [...new Set(buckets)].filter(Boolean);
+
+  // Clear current options
+  bucketSelect.innerHTML = "";
+
+  // Add new options
+  buckets.forEach(bucket => {
+    const opt = document.createElement('option');
+    opt.value = bucket;
+    opt.textContent = bucket;
+    bucketSelect.appendChild(opt);
+  });
+
+  // Default selection
+  if (window.APP_CONFIG && window.APP_CONFIG.defaultBucket) {
+    bucketSelect.value = window.APP_CONFIG.defaultBucket;
   }
-  
-  localStorage.setItem('hf_buckets', JSON.stringify(saved));
 }
 
-// Initial build of the dropdown
-updateBucketDropdown(); 
+// Build dropdown on startup
+updateBucketDropdown();
 
 function getBucketQuery() {
   return bucketSelect && bucketSelect.value ? `?bucket=${encodeURIComponent(bucketSelect.value)}` : '';
 }
 
-// When user selects a different bucket from the dropdown
 if (bucketSelect) {
   bucketSelect.addEventListener('change', () => {
     currentPath = '';
     loadFiles(currentTarget);
-    setStatus(`Switched to Bucket: ${bucketSelect.value}`, 'success');
+    setStatus(`Switched to: ${bucketSelect.value}`, 'success');
   });
 }
 
-// When user clicks the "➕ Add" button
 if (addBucketBtn) {
   addBucketBtn.addEventListener('click', () => {
-    const newBucket = prompt("Enter new bucket name (e.g. username/bucket-name):");
-    if (newBucket && newBucket.trim()) {
-       let saved = JSON.parse(localStorage.getItem('hf_buckets') || '[]');
-       saved.push(newBucket.trim());
-       localStorage.setItem('hf_buckets', JSON.stringify(saved));
-       
+    const name = prompt("Enter bucket name (user/repo):");
+    if (name && name.trim()) {
+       let history = JSON.parse(localStorage.getItem('hf_buckets') || '[]');
+       history.push(name.trim());
+       localStorage.setItem('hf_buckets', JSON.stringify([...new Set(history)]));
        updateBucketDropdown();
-       bucketSelect.value = newBucket.trim(); // Auto-select the newly added bucket
-       
+       bucketSelect.value = name.trim();
        currentPath = '';
        loadFiles(currentTarget);
-       setStatus(`Added and Switched to Bucket: ${newBucket.trim()}`, 'success');
     }
   });
 }
-// ------------------------------
 
 function setStatus(message, type = 'success', target = uploadStatus) {
   target.textContent = message;
@@ -218,12 +225,12 @@ uploadArea.addEventListener('drop', async (e) => {
   e.preventDefault();
   uploadArea.classList.remove('dragover');
   const droppedFiles = await getDroppedFiles(e.dataTransfer);
-  if (droppedFiles.length === 0) return setStatus('No files found in dropped data', 'error');
+  if (droppedFiles.length === 0) return setStatus('No files found', 'error');
   await uploadFilesReq(droppedFiles, true);
 });
 
 uploadBtn.addEventListener('click', async () => {
-  if (fileInput.files.length === 0) return setStatus('Please select at least one file', 'error');
+  if (fileInput.files.length === 0) return setStatus('Please select a file', 'error');
   await uploadFilesReq(fileInput.files);
 });
 
@@ -246,7 +253,7 @@ async function uploadFilesReq(fileList, isFolder = false) {
 
     if (bucketFilesMap.has(fullPath)) {
       const existingSize = formatBytes(bucketFilesMap.get(fullPath));
-      const userInput = prompt(`⚠️ FILE ALREADY EXISTS!\n\nName: ${fullPath}\nSize: ${existingSize}\n\n- To REPLACE it, click OK.\n- To RENAME it, change the name below and click OK.\n- To SKIP this file, click Cancel.`, fullPath);
+      const userInput = prompt(`⚠️ Conflict!\nName: ${fullPath}\nSize: ${existingSize}\n\nOK: Replace\nType name: Rename\nCancel: Skip`, fullPath);
       if (userInput === null) continue;
       fullPath = userInput; 
     }
@@ -287,7 +294,7 @@ async function uploadFilesReq(fileList, isFolder = false) {
     uploadBtn.disabled = false; uploadBtn.textContent = 'Upload Selected';
     uploadProgressContainer.style.display = 'none';
     if (xhr.status >= 200 && xhr.status < 300) {
-      setStatus(`Uploaded successfully to bucket!`, 'success');
+      setStatus(`Uploaded successfully!`, 'success');
       fileInput.value = ''; if(folderInput) folderInput.value = '';
       await loadFiles(currentTarget);
     } else {
@@ -326,7 +333,7 @@ deleteSelectedBtn.addEventListener('click', async () => {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ filenames: Array.from(selectedFiles) }),
     });
     if (!res.ok) throw new Error((await res.json()).error);
-    setStatus('Selected files deleted', 'success');
+    setStatus('Deleted successfully', 'success');
     selectedFiles.clear(); await loadFiles(currentTarget);
   } catch (err) { setStatus('Delete error: ' + err.message, 'error'); }
 });
@@ -336,7 +343,7 @@ clearSelectionBtn.addEventListener('click', () => {
 });
 
 createFolderBtn.addEventListener('click', async () => {
-  const folderName = prompt('Enter folder name:');
+  const folderName = prompt('Folder name:');
   if (!folderName) return;
   const folderPath = currentPath ? `${currentPath}/${folderName}` : folderName;
   try {
@@ -350,8 +357,8 @@ createFolderBtn.addEventListener('click', async () => {
 });
 
 moveSelectedBtn.addEventListener('click', async () => {
-  if (selectedFiles.size === 0) return setStatus('No files selected', 'error');
-  const destination = prompt('Enter destination folder path (leave empty for root):');
+  if (selectedFiles.size === 0) return setStatus('No selection', 'error');
+  const destination = prompt('Destination folder (blank = root):');
   if (destination === null) return; 
   try {
     const query = currentTarget === 'hf' ? getBucketQuery() : '';
@@ -359,7 +366,7 @@ moveSelectedBtn.addEventListener('click', async () => {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ files: Array.from(selectedFiles), destination: destination || '' })
     });
     if (!response.ok) throw new Error(await response.text());
-    setStatus('Files moved', 'success');
+    setStatus('Moved successfully', 'success');
     selectedFiles.clear(); selectAllCheckbox.checked = false; await loadFiles(currentTarget);
   } catch (err) { setStatus('Error: ' + err.message, 'error'); }
 });
@@ -376,7 +383,7 @@ async function loadFiles(target = currentTarget) {
     }
 
     if (!Array.isArray(allFiles) || allFiles.length === 0) {
-      filesList.innerHTML = '<p>No files found in this bucket. Upload one to get started!</p>';
+      filesList.innerHTML = '<p>No files found.</p>';
       cachedFiles = []; selectedFiles.clear(); updateSelectionControls(); return;
     }
 
@@ -401,7 +408,7 @@ async function loadFiles(target = currentTarget) {
 
     const files = Array.from(directMap.values());
     if (files.length === 0) {
-      filesList.innerHTML = '<p>This folder is empty.</p>';
+      filesList.innerHTML = '<p>Empty folder.</p>';
       cachedFiles = []; selectedFiles.clear(); updateSelectionControls(); return;
     }
 
@@ -470,17 +477,16 @@ window.downloadFile = async (encodedName, target) => {
     try {
       const query = getBucketQuery();
       const resp = await fetch(`/api/hf/public-url/${encodeURIComponent(name)}${query}`);
-      if (!resp.ok) throw new Error('Cannot get HF URL');
+      if (!resp.ok) throw new Error('Failed URL');
       const json = await resp.json();
       const downloadUrl = window.APP_CONFIG?.hasHfToken ? json.proxyUrl : json.url;
       if (window.APP_CONFIG?.hasHfToken) {
         const a = document.createElement('a');
         a.href = downloadUrl; a.download = name.split('/').pop();
         document.body.appendChild(a); a.click(); document.body.removeChild(a);
-        setStatus('Downloading via proxy', 'success');
-      } else { window.open(downloadUrl, '_blank'); setStatus('Opening direct HF download', 'success'); }
+      } else { window.open(downloadUrl, '_blank'); }
       return;
-    } catch (err) { return setStatus('Download failed: ' + err.message, 'error'); }
+    } catch (err) { setStatus('Download failed', 'error'); return; }
   }
   const a = document.createElement('a'); a.href = `/api/download/${encodeURIComponent(name)}`;
   a.download = name.split('/').pop(); document.body.appendChild(a); a.click(); document.body.removeChild(a);
@@ -492,12 +498,10 @@ window.copyLink = async (encodedName, target) => {
     try {
       const query = getBucketQuery();
       const resp = await fetch(`/api/hf/public-url/${encodeURIComponent(name)}${query}`);
-      if (!resp.ok) throw new Error('Cannot get HF URL');
       const json = await resp.json();
-      const linkUrl = window.APP_CONFIG?.hasHfToken ? json.proxyUrl : json.url;
-      await navigator.clipboard.writeText(linkUrl);
+      await navigator.clipboard.writeText(json.proxyUrl);
       return setStatus('Link copied!', 'success');
-    } catch (err) { return setStatus('Copy link failed', 'error'); }
+    } catch (err) { return setStatus('Copy failed', 'error'); }
   }
   await navigator.clipboard.writeText(`${window.location.origin}/api/download/${encodeURIComponent(name)}`);
   setStatus('Link copied', 'success');
@@ -505,14 +509,14 @@ window.copyLink = async (encodedName, target) => {
 
 window.renameFile = async (encodedName, target) => {
   const name = decodeURIComponent(encodedName);
-  const newName = prompt('Enter new name:', name);
+  const newName = prompt('New name:', name);
   if (!newName || newName === name) return;
   try {
     const query = target === 'hf' ? getBucketQuery() : '';
     const res = await fetch(`${target === 'hf' ? '/api/hf/rename' : '/api/rename'}${query}`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ oldPath: name, newPath: newName }),
     });
-    if (!res.ok) throw new Error((await res.json()).error);
+    if (!res.ok) throw new Error('Rename failed');
     setStatus('Renamed', 'success'); selectedFiles.delete(name); await loadFiles(currentTarget);
   } catch (err) { setStatus('Rename error: ' + err.message, 'error'); }
 };
@@ -526,7 +530,7 @@ window.deleteFile = async (encodedName, target) => {
   try {
     const query = target === 'hf' ? getBucketQuery() : '';
     const res = await fetch(`${target === 'hf' ? `/api/hf/delete/${encodeURIComponent(name)}` : `/api/delete/${encodeURIComponent(name)}`}${query}`, { method: 'DELETE' });
-    if (!res.ok) throw new Error((await res.json()).error);
+    if (!res.ok) throw new Error('Delete failed');
     setStatus('Deleted', 'success'); selectedFiles.delete(name); await loadFiles(currentTarget);
   } catch (err) { setStatus('Delete error: ' + err.message, 'error'); }
 };

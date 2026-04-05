@@ -10,7 +10,7 @@ const { listFiles, uploadFiles, deleteFile, downloadFile } = require('@huggingfa
 const app = express();
 const PORT = process.env.PORT || 3000;
 const DEFAULT_HF_BUCKET = process.env.HF_BUCKET || ''; 
-const AVAILABLE_BUCKETS = process.env.AVAILABLE_BUCKETS || ''; // Allows setting a list of buckets in Render
+const AVAILABLE_BUCKETS = process.env.AVAILABLE_BUCKETS || ''; 
 const HF_TOKEN = process.env.HF_TOKEN || '';
 
 app.use(cors());
@@ -29,7 +29,7 @@ const upload = multer({ dest: tempUploadsDir, limits: { fileSize: 2000 * 1024 * 
 const cleanup = (files) => {
   const filesToDelete = Array.isArray(files) ? files : [files];
   filesToDelete.forEach(f => {
-    if (f && f.path) fs.promises.unlink(f.path).catch(e => console.error('Failed to delete temp file:', f.path));
+    if (f && f.path) fs.promises.unlink(f.path).catch(e => {});
   });
 };
 
@@ -65,7 +65,6 @@ function hfCheckConfig(req, res) {
 async function hfDeletePaths(targetPaths, targetBucket) {
   const targets = Array.isArray(targetPaths) ? targetPaths : [targetPaths];
   const toDelete = new Set();
-  
   for await (const item of listFiles({ repo: `buckets/${targetBucket}`, repoType: 'bucket', recursive: true, accessToken: HF_TOKEN })) {
     for (const target of targets) {
       if (item.path === target || item.path.startsWith(target + '/')) toDelete.add(item.path);
@@ -80,7 +79,13 @@ app.get('/', (req, res) => {
   const indexPath = path.join(__dirname, 'public', 'index.html');
   fs.readFile(indexPath, 'utf8', (err, data) => {
     if (err) return res.status(500).send('Error loading page');
-    const configScript = `<script>window.APP_CONFIG = { hasHfToken: ${!!HF_TOKEN}, defaultBucket: "${DEFAULT_HF_BUCKET}", envBuckets: "${AVAILABLE_BUCKETS}" };</script>`;
+    // FIX: Cleaner injection of variables
+    const config = {
+      hasHfToken: !!HF_TOKEN,
+      defaultBucket: DEFAULT_HF_BUCKET,
+      envBuckets: AVAILABLE_BUCKETS
+    };
+    const configScript = `<script>window.APP_CONFIG = ${JSON.stringify(config)};</script>`;
     const finalHtml = data.replace('<link rel="stylesheet" href="style.css">', `${configScript}\n<link rel="stylesheet" href="style.css">`);
     res.send(finalHtml);
   });
@@ -143,21 +148,16 @@ app.get('/api/hf/download/*', async (req, res) => {
     try { await downloadFile({ repo: `buckets/${targetBucket}`, repoType: 'bucket', path: filePath, accessToken: HF_TOKEN }); } 
     catch (e) { if (e.message !== "INTERCEPTED") throw e; } 
     finally { globalThis.fetch = originalFetch; }
-
     if (!targetUrl) return res.status(500).json({ error: "URL resolution failed" });
-
     const fetchHeaders = { 'Authorization': `Bearer ${HF_TOKEN}` };
     if (req.headers.range) fetchHeaders['Range'] = req.headers.range;
-
     const response = await fetch(targetUrl, { headers: fetchHeaders });
     if (!response.ok) return res.status(response.status).json({ error: 'Not found' });
-
     res.setHeader('Accept-Ranges', 'bytes');
     res.setHeader('Content-Disposition', `attachment; filename="${path.basename(filePath)}"`);
     if (response.headers.has('content-type')) res.setHeader('Content-Type', response.headers.get('content-type'));
     if (response.headers.has('content-length')) res.setHeader('Content-Length', response.headers.get('content-length'));
     if (response.headers.has('content-range')) res.setHeader('Content-Range', response.headers.get('content-range'));
-    
     res.status(response.status);
     Readable.fromWeb(response.body).pipe(res);
   } catch (error) { if (!res.headersSent) res.status(500).json({ error: error.message }); }
