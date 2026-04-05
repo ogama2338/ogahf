@@ -13,10 +13,11 @@ const DEFAULT_HF_BUCKET = process.env.HF_BUCKET || '';
 const AVAILABLE_BUCKETS = process.env.AVAILABLE_BUCKETS || ''; 
 const HF_TOKEN = process.env.HF_TOKEN || '';
 
+console.log("Reading AVAILABLE_BUCKETS from environment: '", AVAILABLE_BUCKETS, "'");
+
 app.use(cors());
 app.use(express.json({ limit: '1000mb' }));
 app.use(express.urlencoded({ limit: '1000mb', extended: true }));
-app.use(express.static('public'));
 
 const uploadsDir = path.join(__dirname, 'uploads');
 const tempUploadsDir = path.join(__dirname, 'temp_uploads');
@@ -79,17 +80,18 @@ app.get('/', (req, res) => {
   const indexPath = path.join(__dirname, 'public', 'index.html');
   fs.readFile(indexPath, 'utf8', (err, data) => {
     if (err) return res.status(500).send('Error loading page');
-    // FIX: Cleaner injection of variables
     const config = {
       hasHfToken: !!HF_TOKEN,
       defaultBucket: DEFAULT_HF_BUCKET,
       envBuckets: AVAILABLE_BUCKETS
     };
     const configScript = `<script>window.APP_CONFIG = ${JSON.stringify(config)};</script>`;
-    const finalHtml = data.replace('<link rel="stylesheet" href="style.css">', `${configScript}\n<link rel="stylesheet" href="style.css">`);
+    const finalHtml = data.replace('</head>', `${configScript}\n</head>`);
     res.send(finalHtml);
   });
 });
+
+app.use(express.static('public'));
 
 app.get('/api/hf/files', async (req, res) => {
   const targetBucket = hfCheckConfig(req, res); if (!targetBucket) return;

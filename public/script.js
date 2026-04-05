@@ -31,42 +31,63 @@ let bucketFilesMap = new Map();
 
 // FIX: Robust Bucket Dropdown Logic
 function updateBucketDropdown() {
-  if (!bucketSelect) return;
-  
+  console.log("Attempting to update bucket dropdown...");
+  console.log("APP_CONFIG from server:", window.APP_CONFIG);
+
+  if (!bucketSelect) {
+    console.error("Could not find the 'bucketSelect' element in the DOM.");
+    return;
+  }
+  console.log("Found bucketSelect element:", bucketSelect);
+
   let buckets = [];
 
   // 1. Get from Server Configuration (Render Variables)
   if (window.APP_CONFIG) {
-    if (window.APP_CONFIG.defaultBucket) buckets.push(window.APP_CONFIG.defaultBucket.trim());
+    if (window.APP_CONFIG.defaultBucket) {
+        console.log("Found defaultBucket:", window.APP_CONFIG.defaultBucket);
+        buckets.push(window.APP_CONFIG.defaultBucket.trim());
+    }
     if (window.APP_CONFIG.envBuckets) {
+      console.log("Found envBuckets:", window.APP_CONFIG.envBuckets);
       window.APP_CONFIG.envBuckets.split(',').forEach(b => buckets.push(b.trim()));
     }
+  } else {
+    console.warn("window.APP_CONFIG is not defined.");
   }
 
   // 2. Get from Local Browser History
   try {
     const history = JSON.parse(localStorage.getItem('hf_buckets') || '[]');
     if (Array.isArray(history)) {
+        console.log("Found buckets from localStorage:", history);
         history.forEach(b => buckets.push(b.trim()));
     }
-  } catch(e) {}
+  } catch(e) {
+    console.error("Error reading buckets from localStorage:", e);
+  }
 
   // Deduplicate and clean
   buckets = [...new Set(buckets)].filter(Boolean);
+  console.log("Final, deduplicated list of buckets:", buckets);
 
   // Clear current options
   bucketSelect.innerHTML = "";
 
   // Add new options
+  console.log("Adding new options to the dropdown...");
   buckets.forEach(bucket => {
+    console.log("Adding bucket:", bucket);
     const opt = document.createElement('option');
     opt.value = bucket;
     opt.textContent = bucket;
     bucketSelect.appendChild(opt);
   });
+  console.log("Finished adding options.");
 
   // Default selection
   if (window.APP_CONFIG && window.APP_CONFIG.defaultBucket) {
+    console.log("Setting default selection to:", window.APP_CONFIG.defaultBucket);
     bucketSelect.value = window.APP_CONFIG.defaultBucket;
   }
 }
